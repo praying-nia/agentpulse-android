@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish Android release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect Gradle project
+        id: project
+        shell: bash
+        run: |
+          if [[ -f gradlew ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Java
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build Android release
+        if: steps.project.outputs.exists == 'true'
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon check assembleRelease
+
+      - name: Package source
+        shell: bash
+        run: |
+          mkdir -p dist
+          repository="${GITHUB_REPOSITORY#*/}"
+          archive="dist/${repository}-${GITHUB_REF_NAME}-source.tar.gz"
+          tar --exclude='.git' --exclude='.git/*' --exclude='./dist' --exclude='*/build' --exclude=target -czf "$archive" .
+          shasum -a 256 "$archive" > "${archive}.sha256"
+
+      - name: Collect Android outputs
+        if: steps.project.outputs.exists == 'true'
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            cp "$file" dist/
+          done < <(find . -path '*/build/outputs/*' -type f \( -name '*.apk' -o -name '*.aab' \) -print0)
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

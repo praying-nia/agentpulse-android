@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Check repository hygiene
+        shell: bash
+        run: |
+          test -s README.md
+          git show --check --format= HEAD
+
+      - name: Detect Gradle project
+        id: project
+        shell: bash
+        run: |
+          if [[ -f gradlew ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Gradle wrapper is not present yet; repository checks only."
+          fi
+
+      - name: Set up Java
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run Android checks and debug build
+        if: steps.project.outputs.exists == 'true'
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon check assembleDebug
+
+      - name: Upload Android build artifacts
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ github.event.repository.name }}-android-${{ github.sha }}
+          path: |
+            **/build/outputs/**/*.apk
+            **/build/outputs/**/*.aab
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Create CI source snapshot
+        id: snapshot
+        shell: bash
+        run: |
+          archive="${GITHUB_REPOSITORY#*/}-${GITHUB_SHA::12}-source.tar.gz"
+          tar --exclude-vcs --exclude='*/build' --exclude="$archive" -czf "$archive" .
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload CI source artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ github.event.repository.name }}-source-${{ github.sha }}
+          path: ${{ steps.snapshot.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

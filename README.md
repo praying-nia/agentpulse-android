@@ -1,19 +1,42 @@
 # agentpulse-android
 
-Native Android companion application for AgentPulse.
+Native Android client for the complete local, read-only AgentPulse path.
 
-AgentPulse 的 Android 原生移动客户端。
+The app securely pairs with an `agentpulse` Host over nearby BLE or QR, stores only encrypted Host credentials in Android Keystore-backed storage, connects over authenticated private-LAN WSS, performs strict Native v1 discovery/baseline subscription, and displays live Session/Event timelines. It never persists Session/Event data and exposes no approval, input, command, Relay, or public-network behavior.
 
-The application will receive AgentPulse notifications, display connected coding-agent sessions, tasks, plans, progress, tool activity, permission requests, and completion or failure states. Where supported by the corresponding agent, it will also provide lightweight remote actions such as approval, rejection, question responses, and short text input.
+## Requirements and build
 
-本应用用于接收 AgentPulse 通知，展示已连接 Coding Agent 的会话、任务、计划、进度、工具调用、权限请求以及完成或失败状态。在对应 Agent 支持时，也将提供批准、拒绝、回答问题和提交简短文本等轻量远程操作。
+- Android 8.0 / API 26 or newer
+- Android SDK Platform 37.0 and Build Tools 37.0.0
+- JDK 17 or newer
 
-The app communicates through the shared AgentPulse protocol and does not connect directly to individual CLI agents.
+```bash
+./gradlew test lintDebug assembleDebug
+./gradlew connectedDebugAndroidTest
+```
 
-应用通过统一的 AgentPulse 协议通信，不直接耦合具体 CLI Agent。
+The debug APK is written under `app/build/outputs/apk/debug/`. CI validates the wrapper, tests the pure Kotlin protocol/reducer module, runs Android lint, builds the APK, and launches a smoke test on an emulator.
 
-## Status / 状态
+## Pair and connect
 
-Repository scaffold only; the Android project has not been initialized.
+1. Initialize and start the desktop Host, then run `agentpulse pair` in another terminal.
+2. In the app choose **Pair nearby**. Android Companion Device Manager restricts discovery to the AgentPulse service and establishes the OS BLE association before the secure GATT read. If BLE is unavailable, choose **Scan QR code**.
+3. Confirm the device name and UUID on the Host terminal.
+4. Select the saved Host and choose **Connect**. Android 16/API 37 also asks for local-network access; Android 13+ asks for notification permission.
 
-当前仅完成仓库占位，尚未初始化 Android 工程。
+Connection is always an explicit user action. The connected-device foreground service keeps it alive, rediscovers a changed LAN endpoint with mDNS, and retries with bounded jittered backoff. Disconnect stops the service. Warning, failure, read-only interaction, completion, and connection-loss notifications are grouped; ordinary event traffic stays in the app.
+
+Phone layouts use list/detail navigation; expanded windows use a two-pane timeline. English and Simplified Chinese resources, light/dark themes, dynamic color, screen-reader descriptions for actions, and a read-only capability marker are included.
+
+## Security and data boundary
+
+- Initial WSS pairing trusts only the exact leaf SHA-256 in the BLE/QR bundle.
+- The persistent Native connection validates the stable Host DNS name against the app-scoped CA returned after local approval.
+- Every Native upgrade sends the stable installation UUIDv7 and its per-device bearer token; the following Client Hello repeats the same identity.
+- Host profiles and tokens are encrypted with AES-256-GCM using a non-exportable Android Keystore key. Backup is disabled.
+- Forgetting a Host removes the local credential. Use `agentpulse devices revoke` to invalidate it on the Host as well.
+- Session snapshots and the latest 256 Events per Session exist only in process memory and disappear on disconnect/process death.
+
+## Signed releases
+
+Tag builds require these GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The release workflow produces a signed, minified APK and AAB plus checksums/source archive. Local release signing uses the equivalent `AGENTPULSE_KEYSTORE_PATH`, `AGENTPULSE_KEYSTORE_PASSWORD`, `AGENTPULSE_KEY_ALIAS`, and `AGENTPULSE_KEY_PASSWORD` environment variables.

@@ -23,30 +23,47 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect Gradle project
-        id: project
-        shell: bash
-        run: |
-          if [[ -f gradlew ]]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Java
-        if: steps.project.outputs.exists == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 platform
+        shell: bash
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - name: Prepare release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          AGENTPULSE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          AGENTPULSE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          AGENTPULSE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$AGENTPULSE_KEYSTORE_PASSWORD"
+          test -n "$AGENTPULSE_KEY_ALIAS"
+          test -n "$AGENTPULSE_KEY_PASSWORD"
+          AGENTPULSE_KEYSTORE_PATH="$RUNNER_TEMP/agentpulse-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$AGENTPULSE_KEYSTORE_PATH"
+          echo "AGENTPULSE_KEYSTORE_PATH=$AGENTPULSE_KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "AGENTPULSE_KEYSTORE_PASSWORD=$AGENTPULSE_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "AGENTPULSE_KEY_ALIAS=$AGENTPULSE_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "AGENTPULSE_KEY_PASSWORD=$AGENTPULSE_KEY_PASSWORD" >> "$GITHUB_ENV"
+
       - name: Build Android release
-        if: steps.project.outputs.exists == 'true'
         shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon check assembleRelease
+          ./gradlew --no-daemon test lintRelease assembleRelease bundleRelease
 
       - name: Package source
         shell: bash
@@ -58,7 +75,6 @@ jobs:
           shasum -a 256 "$archive" > "${archive}.sha256"
 
       - name: Collect Android outputs
-        if: steps.project.outputs.exists == 'true'
         shell: bash
         run: |
           while IFS= read -r -d '' file; do

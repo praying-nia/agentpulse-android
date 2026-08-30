@@ -29,34 +29,30 @@ jobs:
           test -s README.md
           git show --check --format= HEAD
 
-      - name: Detect Gradle project
-        id: project
-        shell: bash
-        run: |
-          if [[ -f gradlew ]]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Gradle wrapper is not present yet; repository checks only."
-          fi
-
       - name: Set up Java
-        if: steps.project.outputs.exists == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 platform
+        shell: bash
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
       - name: Run Android checks and debug build
-        if: steps.project.outputs.exists == 'true'
         shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon check assembleDebug
+          ./gradlew --no-daemon test lintDebug assembleDebug
 
       - name: Upload Android build artifacts
-        if: steps.project.outputs.exists == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ github.event.repository.name }}-android-${{ github.sha }}
@@ -82,3 +78,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  instrumentation:
+    name: Emulator smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run instrumentation test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: ./gradlew --no-daemon connectedDebugAndroidTest

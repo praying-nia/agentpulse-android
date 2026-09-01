@@ -9,8 +9,6 @@ const val NATIVE_PATH: String = "/agentpulse/native/v1"
 const val NATIVE_SUBPROTOCOL: String = "agentpulse.native.v1"
 const val PAIRING_PATH: String = "/agentpulse/pair/v1"
 const val PAIRING_SUBPROTOCOL: String = "agentpulse.pair.v1"
-const val PAIRING_BLE_SERVICE_UUID: String = "d22e50f9-015e-53ba-be49-3e4d235f3288"
-const val PAIRING_BLE_CHARACTERISTIC_UUID: String = "ea63bfc9-87c3-5074-aa37-49b6a617569b"
 
 class ProtocolException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
 
@@ -130,6 +128,7 @@ data class PairingBundle(
     val port: Int,
     val leafSha256: String,
     val bootstrapToken: String,
+    val relayEndpoint: String,
     val expiresAtUnixSeconds: Long,
 )
 

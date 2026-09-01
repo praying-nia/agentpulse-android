@@ -33,11 +33,12 @@ class ProtocolTest {
 
     @Test
     fun pairingBundleAndServerSuccessAreStrict() {
-        val json = """{"pairing_version":1,"pairing_id":"$PAIRING_ID","host_id":"$HOST_ID","host_name":"Studio Host","server_name":"$HOST_ID.agentpulse.local","address":"192.168.50.4","port":49321,"leaf_sha256":"${"ab".repeat(32)}","bootstrap_token":"bootstrap-secret","expires_at_unix_seconds":4102444800}"""
+        val json = """{"pairing_version":1,"pairing_id":"$PAIRING_ID","host_id":"$HOST_ID","host_name":"Studio Host","server_name":"$HOST_ID.agentpulse.local","address":"127.0.0.1","port":49321,"leaf_sha256":"${"ab".repeat(32)}","bootstrap_token":"bootstrap-secret","relay_endpoint":"relay.example.com:2333","expires_at_unix_seconds":4102444800}"""
         val uri = "agentpulse://pair/v1/" + Base64.getUrlEncoder().withoutPadding().encodeToString(json.encodeToByteArray())
         val bundle = PairingCodec.decodeUri(uri, nowUnixSeconds = 1_800_000_000)
         assertEquals(PAIRING_ID, bundle.pairingId)
         assertEquals(49_321, bundle.port)
+        assertEquals("relay.example.com:2333", bundle.relayEndpoint)
 
         val success = PairingCodec.decodeServer(PAIRING_SUCCEEDED)
         assertTrue(success is PairingServerMessage.Succeeded)
@@ -52,6 +53,11 @@ class ProtocolTest {
         }
         assertThrows(ProtocolException::class.java) {
             PairingCodec.decodeUri(uri, nowUnixSeconds = 4_102_444_800)
+        }
+        val invalidRelay = json.replace("relay.example.com:2333", "https://relay.example.com:2333")
+        val invalidRelayUri = "agentpulse://pair/v1/" + Base64.getUrlEncoder().withoutPadding().encodeToString(invalidRelay.encodeToByteArray())
+        assertThrows(ProtocolException::class.java) {
+            PairingCodec.decodeUri(invalidRelayUri, nowUnixSeconds = 1_800_000_000)
         }
     }
 

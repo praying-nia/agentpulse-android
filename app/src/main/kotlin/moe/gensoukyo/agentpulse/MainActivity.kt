@@ -27,7 +27,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -81,7 +80,6 @@ import moe.gensoukyo.agentpulse.connection.ConnectionSnapshot
 import moe.gensoukyo.agentpulse.connection.RelayEndpoint
 import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
-import moe.gensoukyo.agentpulse.pairing.NearbyPairingController
 import moe.gensoukyo.agentpulse.pairing.QrScanner
 import moe.gensoukyo.agentpulse.protocol.EventImportance
 import moe.gensoukyo.agentpulse.protocol.EventRecord
@@ -104,19 +102,9 @@ class MainActivity : ComponentActivity() {
         if (granted) showScanner = true else transientError = getString(R.string.camera_permission_required)
     }
 
-    private lateinit var nearby: NearbyPairingController
-    private val bluetoothPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) nearby.start() else transientError = getString(R.string.bluetooth_permission_required)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        nearby = NearbyPairingController(
-            activity = this,
-            onPairingUri = viewModel::pair,
-            onError = { transientError = it },
-        )
         handleIntent(intent)
         setContent {
             AgentPulseTheme {
@@ -128,7 +116,6 @@ class MainActivity : ComponentActivity() {
                 AgentPulseApp(
                     viewModel = viewModel,
                     snackbar = snackbar,
-                    onNearby = ::beginNearby,
                     onScanQr = ::beginQr,
                     onConnect = ::beginConnect,
                     scannerVisible = showScanner,
@@ -147,7 +134,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        intent?.dataString?.takeIf { it.startsWith("agentpulse://pair/v1/") }?.let(viewModel::pair)
         intent?.getStringExtra(ConnectionService.EXTRA_SESSION_ID)?.let(viewModel::selectSession)
     }
 
@@ -167,16 +153,6 @@ class MainActivity : ComponentActivity() {
         } else connectPermissions.launch(required.toTypedArray())
     }
 
-    private fun beginNearby() {
-        if (Build.VERSION.SDK_INT < 31) {
-            nearby.start()
-            return
-        }
-        val permissions = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        if (permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) nearby.start()
-        else bluetoothPermissions.launch(permissions.toTypedArray())
-    }
-
     private fun beginQr() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) showScanner = true
         else cameraPermission.launch(Manifest.permission.CAMERA)
@@ -188,7 +164,6 @@ class MainActivity : ComponentActivity() {
 private fun AgentPulseApp(
     viewModel: MainViewModel,
     snackbar: SnackbarHostState,
-    onNearby: () -> Unit,
     onScanQr: () -> Unit,
     onConnect: (HostProfile) -> Unit,
     scannerVisible: Boolean,
@@ -221,7 +196,6 @@ private fun AgentPulseApp(
                 connection.host != null -> SessionScreen(connection, null, false, viewModel::selectSession, viewModel::disconnect, onConnect, Modifier.padding(padding))
                 else -> HostScreen(
                     app.hosts,
-                    onNearby,
                     onScanQr,
                     onConnect,
                     viewModel::forget,
@@ -250,7 +224,6 @@ private fun AgentPulseApp(
 @Composable
 private fun HostScreen(
     hosts: List<HostProfile>,
-    onNearby: () -> Unit,
     onScanQr: () -> Unit,
     onConnect: (HostProfile) -> Unit,
     onForget: (String) -> Unit,
@@ -261,10 +234,7 @@ private fun HostScreen(
     var relayEditor by remember { mutableStateOf<HostProfile?>(null) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onNearby) { Icon(Icons.AutoMirrored.Filled.BluetoothSearching, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.pair_nearby)) }
-                Button(onClick = onScanQr) { Icon(Icons.Default.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.scan_qr)) }
-            }
+            Button(onClick = onScanQr) { Icon(Icons.Default.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.scan_qr)) }
         }
         if (hosts.isEmpty()) item {
             Column(Modifier.fillParentMaxSize().padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -336,7 +306,7 @@ private fun RelaySettingsDialog(
                     value = value,
                     onValueChange = { value = it; error = null },
                     label = { Text(stringResource(R.string.relay_endpoint)) },
-                    placeholder = { Text("relay.example.com:19191") },
+                    placeholder = { Text("relay.example.com:2333") },
                     isError = error != null,
                     supportingText = error?.let { message -> ({ Text(message) }) },
                     singleLine = true,

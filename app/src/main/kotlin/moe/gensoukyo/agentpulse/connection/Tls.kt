@@ -16,9 +16,14 @@ import javax.net.ssl.X509TrustManager
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 
-internal fun pinnedClient(serverName: String, address: String, expectedSha256: String): OkHttpClient {
+internal fun pinnedClient(
+    serverName: String,
+    address: String,
+    expectedSha256: String,
+    socketFactory: SocketFactory? = null,
+): OkHttpClient {
     val trust = FingerprintTrustManager(expectedSha256)
-    return tlsClient(serverName, address, trust)
+    return tlsClient(serverName, address, trust, socketFactory)
 }
 
 internal fun caClient(

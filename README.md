@@ -2,11 +2,12 @@
 
 Native Android client for the complete read-only AgentPulse path.
 
-The app securely pairs with an `agentpulse` Host over nearby BLE or QR, stores only encrypted Host credentials in Android Keystore-backed storage, and connects through either authenticated private-LAN WSS or an explicitly configured public Relay. The Relay sees only an authenticated route and opaque, end-to-end Host-CA TLS bytes. Both routes reuse strict Native v1 discovery/baseline subscription and the same live Session/Event timeline. The app never persists Session/Event data and exposes no approval, input, command, or Provider write-back behavior.
+The app securely pairs with an `agentpulse` Host only by scanning its terminal QR code. The QR bootstrap travels through the authenticated public Relay without USB, ADB, Bluetooth, or a shared LAN. Android stores only encrypted Host credentials in Android Keystore-backed storage and immediately selects the QR-supplied Relay. The Relay sees only authenticated routes and opaque, end-to-end Host TLS bytes. The app never persists Session/Event data and exposes no approval, input, command, or Provider write-back behavior.
 
 ## Requirements and build
 
 - Android 8.0 / API 26 or newer
+- A camera for the only supported first-pairing path
 - Android SDK Platform 37.0 and Build Tools 37.0.0
 - JDK 17 or newer
 
@@ -19,19 +20,18 @@ The debug APK is written under `app/build/outputs/apk/debug/`. CI validates the 
 
 ## Pair and connect
 
-1. Initialize and start the desktop Host, then run `agentpulse pair` in another terminal.
-2. In the app choose **Pair nearby**. Android Companion Device Manager restricts discovery to the AgentPulse service and establishes the OS BLE association before the secure GATT read. If BLE is unavailable, choose **Scan QR code**.
+1. Configure the desktop Host Relay, start the Host, then run `agentpulse pair` in another terminal.
+2. Wait for the Host to publish its ephemeral Relay route, then choose **Scan QR code** in the app and scan the single terminal QR.
 3. Confirm the device name and UUID on the Host terminal.
-4. Select the saved Host and choose **Connect**. Android 16/API 37 also asks for local-network access; Android 13+ asks for notification permission.
-5. To use the optional public path, save the Relay endpoint supplied by the Host operator and explicitly select **Relay**. Select **LAN** to return to direct private-network access.
+4. Successful approval stores and selects the QR Relay endpoint and starts connecting automatically. LAN remains an explicit post-pairing alternative and may require Android 16/API 37 local-network permission.
 
-Connection and route choice are always explicit user actions; there is no silent LAN/Relay fallback. The connected-device foreground service keeps the chosen route alive and retries it with bounded jittered backoff. LAN mode can rediscover a changed private endpoint with mDNS. Disconnect stops the service. Warning, failure, read-only interaction, completion, and connection-loss notifications are grouped; ordinary event traffic stays in the app.
+The initial Relay route is an explicit property of the scanned QR. Subsequent route changes and reconnects are explicit user actions; there is no silent LAN/Relay fallback. The connected-device foreground service keeps the chosen route alive and retries it with bounded jittered backoff. LAN mode can rediscover a changed private endpoint with mDNS. Disconnect stops the service. Warning, failure, read-only interaction, completion, and connection-loss notifications are grouped; ordinary event traffic stays in the app.
 
 Phone layouts use list/detail navigation; expanded windows use a two-pane timeline. English and Simplified Chinese resources, light/dark themes, dynamic color, screen-reader descriptions for actions, and a read-only capability marker are included.
 
 ## Security and data boundary
 
-- Initial WSS pairing trusts only the exact leaf SHA-256 in the BLE/QR bundle.
+- Initial WSS pairing trusts only the exact leaf SHA-256 in the QR bundle, inside a public Relay tunnel authenticated from the QR bootstrap Token.
 - The persistent Native connection validates the stable Host DNS name against the app-scoped CA returned after local approval.
 - Every Native upgrade sends the stable installation UUIDv7 and its per-device bearer token; the following Client Hello repeats the same identity.
 - Relay route IDs and proofs are domain-separated HMAC values derived from the existing device credential and canonical Relay endpoint. The outer connection uses publicly trusted TLS with hostname validation; the inner Native connection still validates the Host CA and never exposes its bearer token or Session/Event plaintext to Relay.

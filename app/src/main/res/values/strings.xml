@@ -1,7 +1,6 @@
 <resources>
     <string name="app_name">AgentPulse</string>
     <string name="read_only">Read-only</string>
-    <string name="pair_nearby">Pair nearby</string>
     <string name="scan_qr">Scan QR code</string>
     <string name="no_hosts">No paired computers yet</string>
     <string name="connect">Connect</string>
@@ -25,7 +24,6 @@
     <string name="interaction_waiting">%1$s needs attention (read-only)</string>
     <string name="session_finished">%1$s finished</string>
     <string name="camera_permission_required">Camera permission is required to scan a QR code.</string>
-    <string name="bluetooth_permission_required">Nearby device permission is required for BLE pairing.</string>
     <string name="local_network_permission_required">Local network permission is required to connect to the Host.</string>
     <string name="retry">Retry</string>
     <string name="cancel">Cancel</string>

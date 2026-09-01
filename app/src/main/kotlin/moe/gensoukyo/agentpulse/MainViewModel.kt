@@ -61,6 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         pairingMessage = null,
                     )
                 }
+                connect(profile.hostId)
             }.onFailure { error ->
                 mutable.update { it.copy(pairing = PairingPhase.FAILED, pairingMessage = error.message) }
             }

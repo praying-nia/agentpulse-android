@@ -11,14 +11,14 @@ import org.junit.Test
 class RelayProtocolTest {
     @Test
     fun canonicalCrossLanguageVectorIsStable() {
-        val endpoint = RelayEndpoint.parse("relay.example.com:19191")
+        val endpoint = RelayEndpoint.parse("relay.example.com:2333")
         val route = RelayProtocol.derive("fixture-device-token", endpoint)
         assertEquals(
-            "aCqsldNQU3q4F4wpLIb_VHzyh51lR6SwzzuK9dno5Mk",
+            "zHRMqKXGm1oRWx0q8MCJ5jQggwqVtIcG1TkfyS6Oa9w",
             route.routeId,
         )
         assertEquals(
-            "hVBZB_Ak8IDNLGAsJuLi4G_Jhdv1WwnK7YPikP0EGhE",
+            "U3lobEe7CoJfP8q2lbSX-2TyS_XHlmM5DJX7RPS601c",
             Base64.getUrlEncoder().withoutPadding().encodeToString(route.authenticationKey),
         )
 
@@ -35,7 +35,7 @@ class RelayProtocolTest {
         assertEquals("client_hello", message.getValue("type").jsonPrimitive.content)
         assertEquals(route.routeId, message.getValue("route_id").jsonPrimitive.content)
         assertEquals(
-            "5GTj5v2L17ruKW7gkNVZAlwuwo309RR8sYYF2U8FoIk",
+            "edqSJq5Swq3tbEBrgcsFnG6wlJL_8K5xBKdr8pDWvhg",
             message.getValue("proof").jsonPrimitive.content,
         )
     }
@@ -43,13 +43,13 @@ class RelayProtocolTest {
     @Test
     fun endpointIsCanonicalAndRejectsUnsafeForms() {
         assertEquals(
-            "ap.nonamenona.top:19191",
-            RelayEndpoint.parse("AP.NonameNona.Top:19191").authority,
+            "relay.example.com:2333",
+            RelayEndpoint.parse("Relay.Example.Com:2333").authority,
         )
         listOf(
-            "https://ap.nonamenona.top:19191",
-            "39.105.18.37:19191",
-            "localhost:19191",
+            "https://relay.example.com:2333",
+            "192.0.2.1:2333",
+            "localhost:2333",
             "ap.nonamenona.top",
             "ap.nonamenona.top:0",
         ).forEach { value ->

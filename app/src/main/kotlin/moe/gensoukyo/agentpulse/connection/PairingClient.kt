@@ -4,6 +4,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import moe.gensoukyo.agentpulse.BuildConfig
+import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.protocol.PAIRING_PATH
 import moe.gensoukyo.agentpulse.protocol.PAIRING_SUBPROTOCOL
@@ -24,7 +25,13 @@ class PairingClient {
         onPending: () -> Unit,
     ): HostProfile = withTimeout(125_000) {
         val result = CompletableDeferred<HostProfile>()
-        val client = pinnedClient(bundle.serverName, bundle.address, bundle.leafSha256)
+        val relay = RelayEndpoint.parse(bundle.relayEndpoint)
+        val client = pinnedClient(
+            bundle.serverName,
+            bundle.address,
+            bundle.leafSha256,
+            RelayTunnelSocketFactory(relay, bundle.bootstrapToken),
+        )
             .newBuilder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build()
@@ -73,23 +80,15 @@ class PairingClient {
                                 }
                             }
                             is PairingServerMessage.Succeeded -> {
-                                if (message.hostId != bundle.hostId || message.serverName != bundle.serverName || message.nativeTransportVersion != 1 || 1 !in message.domainProtocolVersions) {
-                                    result.completeExceptionally(IllegalStateException("Host identity or protocol changed during pairing"))
-                                    webSocket.close(1008, "identity changed")
-                                } else {
-                                    result.complete(
-                                        HostProfile(
-                                            hostId = message.hostId,
-                                            hostName = message.hostName,
-                                            serverName = message.serverName,
-                                            caCertificateDer = message.caCertificateDer,
-                                            accessToken = message.accessToken,
-                                            lastAddress = message.nativeAddress,
-                                            lastPort = message.nativePort,
-                                        ),
-                                    )
-                                    webSocket.close(1000, "paired")
-                                }
+                                runCatching { pairedRelayProfile(bundle, message) }
+                                    .onSuccess { profile ->
+                                        result.complete(profile)
+                                        webSocket.close(1000, "paired")
+                                    }
+                                    .onFailure { error ->
+                                        result.completeExceptionally(error)
+                                        webSocket.close(1008, "identity changed")
+                                    }
                             }
                             is PairingServerMessage.Error -> result.completeExceptionally(IllegalStateException("${message.code}: ${message.message}"))
                         }
@@ -117,4 +116,27 @@ class PairingClient {
     private companion object {
         const val MAX_FRAME_BYTES = 16 * 1024
     }
+}
+
+internal fun pairedRelayProfile(
+    bundle: PairingBundle,
+    message: PairingServerMessage.Succeeded,
+): HostProfile {
+    if (
+        message.hostId != bundle.hostId ||
+        message.serverName != bundle.serverName ||
+        message.nativeTransportVersion != 1 ||
+        1 !in message.domainProtocolVersions
+    ) throw IllegalStateException("Host identity or protocol changed during pairing")
+    return HostProfile(
+        hostId = message.hostId,
+        hostName = message.hostName,
+        serverName = message.serverName,
+        caCertificateDer = message.caCertificateDer,
+        accessToken = message.accessToken,
+        lastAddress = message.nativeAddress,
+        lastPort = message.nativePort,
+        relayEndpoint = RelayEndpoint.parse(bundle.relayEndpoint).authority,
+        selectedRoute = ConnectionRoute.RELAY,
+    )
 }

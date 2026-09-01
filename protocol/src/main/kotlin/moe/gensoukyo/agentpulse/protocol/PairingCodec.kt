@@ -19,7 +19,7 @@ object PairingCodec {
         if (encoded == uri || encoded.isBlank()) throw ProtocolException("unsupported pairing URI")
         val bytes = try { Base64.getUrlDecoder().decode(encoded) } catch (error: IllegalArgumentException) { throw ProtocolException("invalid pairing URI", error) }
         val value = json.parseToJsonElement(bytes.decodeToString()).objectValue("pairing bundle")
-        value.exact(setOf("pairing_version", "pairing_id", "host_id", "host_name", "server_name", "address", "port", "leaf_sha256", "bootstrap_token", "expires_at_unix_seconds"))
+        value.exact(setOf("pairing_version", "pairing_id", "host_id", "host_name", "server_name", "address", "port", "leaf_sha256", "bootstrap_token", "relay_endpoint", "expires_at_unix_seconds"))
         if (value.int("pairing_version") != PAIRING_PROTOCOL_VERSION) throw ProtocolException("unsupported pairing version")
         val port = integer(value, "port", 1..65535)
         val expires = value["expires_at_unix_seconds"]?.let { (it as? JsonPrimitive)?.longOrNull } ?: throw ProtocolException("invalid pairing expiry")
@@ -35,6 +35,7 @@ object PairingCodec {
             port = port,
             leafSha256 = fingerprint,
             bootstrapToken = value.nonblank("bootstrap_token"),
+            relayEndpoint = validateRelayEndpoint(value.nonblank("relay_endpoint")),
             expiresAtUnixSeconds = expires,
         )
     }
@@ -97,4 +98,33 @@ object PairingCodec {
     }
 
     private fun integer(value: JsonObject, field: String, range: IntRange): Int = value[field]?.let { (it as? JsonPrimitive)?.longOrNull }?.takeIf { it in range.first.toLong()..range.last.toLong() }?.toInt() ?: throw ProtocolException("invalid $field")
+
+    private fun validateRelayEndpoint(value: String): String {
+        if (value != value.trim() || value.contains("//") || value.any { it in "/?#@" }) {
+            throw ProtocolException("invalid relay_endpoint")
+        }
+        val separator = value.lastIndexOf(':')
+        if (separator <= 0 || separator != value.indexOf(':')) throw ProtocolException("invalid relay_endpoint")
+        val host = value.substring(0, separator)
+        val port = value.substring(separator + 1).toIntOrNull()
+        if (
+            host != host.lowercase() ||
+            host.length > 253 ||
+            !host.contains('.') ||
+            !host.all { it.code in 1..127 } ||
+            IPV4.matches(host) ||
+            port == null ||
+            port !in 1..65_535 ||
+            host.split('.').any { label ->
+                label.isEmpty() ||
+                    label.length > 63 ||
+                    label.startsWith('-') ||
+                    label.endsWith('-') ||
+                    label.any { it !in 'a'..'z' && it !in '0'..'9' && it != '-' }
+            }
+        ) throw ProtocolException("invalid relay_endpoint")
+        return value
+    }
+
+    private val IPV4 = Regex("^[0-9]{1,3}(\\.[0-9]{1,3}){3}$")
 }

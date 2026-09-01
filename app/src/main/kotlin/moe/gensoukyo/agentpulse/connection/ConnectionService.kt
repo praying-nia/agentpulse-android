@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import moe.gensoukyo.agentpulse.MainActivity
 import moe.gensoukyo.agentpulse.R
 import moe.gensoukyo.agentpulse.data.CredentialVault
+import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.protocol.EventImportance
 import moe.gensoukyo.agentpulse.protocol.NativeState
@@ -74,7 +75,7 @@ class ConnectionService : LifecycleService() {
                     disconnect()
                     return@launch
                 }
-                if (attempt > 0) {
+                if (attempt > 0 && profile.selectedRoute == ConnectionRoute.LAN) {
                     resolver.resolve(hostId)?.let { endpoint ->
                         profile = profile.copy(lastAddress = endpoint.address, lastPort = endpoint.port)
                     }

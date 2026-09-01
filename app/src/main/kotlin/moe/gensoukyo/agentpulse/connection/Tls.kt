@@ -10,6 +10,7 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
+import javax.net.SocketFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import okhttp3.Dns
@@ -20,7 +21,12 @@ internal fun pinnedClient(serverName: String, address: String, expectedSha256: S
     return tlsClient(serverName, address, trust)
 }
 
-internal fun caClient(serverName: String, address: String, caBase64: String): OkHttpClient {
+internal fun caClient(
+    serverName: String,
+    address: String,
+    caBase64: String,
+    socketFactory: SocketFactory? = null,
+): OkHttpClient {
     val certificate = CertificateFactory.getInstance("X.509")
         .generateCertificate(android.util.Base64.decode(caBase64, android.util.Base64.DEFAULT).inputStream())
     val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
@@ -29,12 +35,17 @@ internal fun caClient(serverName: String, address: String, caBase64: String): Ok
     }
     val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(keyStore) }
     val trust = factory.trustManagers.filterIsInstance<X509TrustManager>().single()
-    return tlsClient(serverName, address, trust)
+    return tlsClient(serverName, address, trust, socketFactory)
 }
 
-private fun tlsClient(serverName: String, address: String, trust: X509TrustManager): OkHttpClient {
+private fun tlsClient(
+    serverName: String,
+    address: String,
+    trust: X509TrustManager,
+    socketFactory: SocketFactory? = null,
+): OkHttpClient {
     val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), SecureRandom()) }
-    return OkHttpClient.Builder()
+    val builder = OkHttpClient.Builder()
         .sslSocketFactory(context.socketFactory, trust)
         .dns(Dns { hostname ->
             if (hostname.equals(serverName, ignoreCase = true)) listOf(InetAddress.getByName(address))
@@ -42,7 +53,8 @@ private fun tlsClient(serverName: String, address: String, trust: X509TrustManag
         })
         .pingInterval(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
-        .build()
+    if (socketFactory != null) builder.socketFactory(socketFactory)
+    return builder.build()
 }
 
 @SuppressLint("CustomX509TrustManager")

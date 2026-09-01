@@ -11,11 +11,16 @@ data class HostProfile(
     val accessToken: String,
     val lastAddress: String,
     val lastPort: Int,
+    val relayEndpoint: String? = null,
+    val selectedRoute: ConnectionRoute = ConnectionRoute.LAN,
 )
 
 @Serializable
+enum class ConnectionRoute { LAN, RELAY }
+
+@Serializable
 internal data class VaultPayload(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val clientId: String,
     val hosts: List<HostProfile> = emptyList(),
 )

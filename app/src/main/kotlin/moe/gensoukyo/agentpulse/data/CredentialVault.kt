@@ -30,8 +30,9 @@ class CredentialVault(private val context: Context) {
         }
         return try {
             val payload = json.decodeFromString<VaultPayload>(decrypt(encoded))
-            require(payload.schemaVersion == 1)
+            require(payload.schemaVersion == 1 || payload.schemaVersion == 2)
             UuidV7.require(payload.clientId, "client_id")
+            if (payload.schemaVersion == 1) persist(payload.copy(schemaVersion = 2))
             VaultSnapshot(payload.clientId, payload.hosts)
         } catch (_: Exception) {
             context.credentialDataStore.edit { it.clear() }

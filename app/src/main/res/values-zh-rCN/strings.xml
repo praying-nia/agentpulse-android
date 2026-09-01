@@ -7,6 +7,14 @@
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
     <string name="forget">忘记</string>
+    <string name="relay_settings">Relay 设置</string>
+    <string name="relay_endpoint">Relay 地址</string>
+    <string name="relay_endpoint_value">Relay：%1$s</string>
+    <string name="relay_explanation">可选的公网路径。Host CA 加密的 Native 连接仍在 Relay 内保持端到端加密；保存地址后不会自动切换路径。</string>
+    <string name="route_lan">局域网</string>
+    <string name="route_relay">Relay</string>
+    <string name="disable_relay">移除 Relay 地址</string>
+    <string name="save">保存</string>
     <string name="sessions">会话</string>
     <string name="no_sessions">没有已配置的会话</string>
     <string name="select_session">选择会话以查看时间线</string>

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import moe.gensoukyo.agentpulse.BuildConfig
 import moe.gensoukyo.agentpulse.data.HostProfile
+import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.protocol.NATIVE_PATH
 import moe.gensoukyo.agentpulse.protocol.NATIVE_SUBPROTOCOL
 import moe.gensoukyo.agentpulse.protocol.NativeClientMessage
@@ -25,7 +26,19 @@ internal class NativeWebSocketClient(
 ) {
     private val completion = CompletableDeferred<Throwable?>()
     private val reducer = NativeSessionReducer()
-    private val client = caClient(profile.serverName, profile.lastAddress, profile.caCertificateDer)
+    private val client = caClient(
+        profile.serverName,
+        profile.lastAddress,
+        profile.caCertificateDer,
+        if (profile.selectedRoute == ConnectionRoute.RELAY) {
+            val endpoint = RelayEndpoint.parse(
+                requireNotNull(profile.relayEndpoint) { "Relay route has no configured endpoint" },
+            )
+            RelayTunnelSocketFactory(endpoint, profile.accessToken)
+        } else {
+            null
+        },
+    )
     private val finished = AtomicBoolean(false)
     private var socket: WebSocket? = null
 

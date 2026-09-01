@@ -15,6 +15,7 @@ import moe.gensoukyo.agentpulse.connection.ConnectionRuntime
 import moe.gensoukyo.agentpulse.connection.ConnectionService
 import moe.gensoukyo.agentpulse.connection.PairingClient
 import moe.gensoukyo.agentpulse.data.CredentialVault
+import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.protocol.PairingCodec
 
@@ -88,6 +89,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (connection.value.host?.hostId == hostId) disconnect()
             vault.forget(hostId)
+            refresh()
+        }
+    }
+
+    fun configureRelay(hostId: String, endpoint: String?) {
+        viewModelScope.launch {
+            val profile = vault.host(hostId) ?: return@launch
+            val updated = profile.copy(
+                relayEndpoint = endpoint,
+                selectedRoute = if (endpoint == null) ConnectionRoute.LAN else profile.selectedRoute,
+            )
+            vault.upsert(updated)
+            refresh()
+        }
+    }
+
+    fun selectRoute(hostId: String, route: ConnectionRoute) {
+        viewModelScope.launch {
+            val profile = vault.host(hostId) ?: return@launch
+            if (route == ConnectionRoute.RELAY && profile.relayEndpoint == null) return@launch
+            vault.upsert(profile.copy(selectedRoute = route))
             refresh()
         }
     }

@@ -40,9 +40,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -75,6 +78,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import moe.gensoukyo.agentpulse.connection.ConnectionPhase
 import moe.gensoukyo.agentpulse.connection.ConnectionService
 import moe.gensoukyo.agentpulse.connection.ConnectionSnapshot
+import moe.gensoukyo.agentpulse.connection.RelayEndpoint
+import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.pairing.NearbyPairingController
 import moe.gensoukyo.agentpulse.pairing.QrScanner
@@ -84,13 +89,13 @@ import moe.gensoukyo.agentpulse.protocol.SessionView
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
-    private var pendingConnect: String? = null
+    private var pendingConnect: HostProfile? = null
     private var showScanner by mutableStateOf(false)
     private var transientError by mutableStateOf<String?>(null)
 
     private val connectPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         val localAllowed = Build.VERSION.SDK_INT < 37 || grants[Manifest.permission.ACCESS_LOCAL_NETWORK] != false
-        if (localAllowed) pendingConnect?.let(viewModel::connect)
+        if (localAllowed) pendingConnect?.hostId?.let(viewModel::connect)
         else transientError = getString(R.string.local_network_permission_required)
         pendingConnect = null
     }
@@ -146,15 +151,19 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra(ConnectionService.EXTRA_SESSION_ID)?.let(viewModel::selectSession)
     }
 
-    private fun beginConnect(hostId: String) {
-        pendingConnect = hostId
+    private fun beginConnect(profile: HostProfile) {
+        pendingConnect = profile
         val required = buildList {
-            if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            if (
+                profile.selectedRoute == ConnectionRoute.LAN &&
+                Build.VERSION.SDK_INT >= 37 &&
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
             if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (required.isEmpty()) {
             pendingConnect = null
-            viewModel.connect(hostId)
+            viewModel.connect(profile.hostId)
         } else connectPermissions.launch(required.toTypedArray())
     }
 
@@ -181,7 +190,7 @@ private fun AgentPulseApp(
     snackbar: SnackbarHostState,
     onNearby: () -> Unit,
     onScanQr: () -> Unit,
-    onConnect: (String) -> Unit,
+    onConnect: (HostProfile) -> Unit,
     scannerVisible: Boolean,
     onScannerDismiss: () -> Unit,
     onQr: (String) -> Unit,
@@ -210,7 +219,16 @@ private fun AgentPulseApp(
                 connection.host != null && twoPane -> SessionScreen(connection, selected, true, viewModel::selectSession, viewModel::disconnect, onConnect, Modifier.padding(padding))
                 selected != null -> SessionDetail(selected, connection, Modifier.padding(padding))
                 connection.host != null -> SessionScreen(connection, null, false, viewModel::selectSession, viewModel::disconnect, onConnect, Modifier.padding(padding))
-                else -> HostScreen(app.hosts, onNearby, onScanQr, onConnect, viewModel::forget, Modifier.padding(padding))
+                else -> HostScreen(
+                    app.hosts,
+                    onNearby,
+                    onScanQr,
+                    onConnect,
+                    viewModel::forget,
+                    viewModel::configureRelay,
+                    viewModel::selectRoute,
+                    Modifier.padding(padding),
+                )
             }
         }
     }
@@ -234,10 +252,13 @@ private fun HostScreen(
     hosts: List<HostProfile>,
     onNearby: () -> Unit,
     onScanQr: () -> Unit,
-    onConnect: (String) -> Unit,
+    onConnect: (HostProfile) -> Unit,
     onForget: (String) -> Unit,
+    onConfigureRelay: (String, String?) -> Unit,
+    onSelectRoute: (String, ConnectionRoute) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var relayEditor by remember { mutableStateOf<HostProfile?>(null) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -256,14 +277,84 @@ private fun HostScreen(
                 Column(Modifier.padding(16.dp)) {
                     Text(host.hostName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(host.serverName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    host.relayEndpoint?.let {
+                        Text(
+                            stringResource(R.string.relay_endpoint_value, it),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = host.selectedRoute == ConnectionRoute.LAN,
+                            onClick = { onSelectRoute(host.hostId, ConnectionRoute.LAN) },
+                            label = { Text(stringResource(R.string.route_lan)) },
+                        )
+                        FilterChip(
+                            selected = host.selectedRoute == ConnectionRoute.RELAY,
+                            enabled = host.relayEndpoint != null,
+                            onClick = { onSelectRoute(host.hostId, ConnectionRoute.RELAY) },
+                            label = { Text(stringResource(R.string.route_relay)) },
+                        )
+                    }
                     Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onConnect(host.hostId) }) { Text(stringResource(R.string.connect)) }
+                        Button(onClick = { onConnect(host) }) { Text(stringResource(R.string.connect)) }
+                        OutlinedButton(onClick = { relayEditor = host }) { Text(stringResource(R.string.relay_settings)) }
                         TextButton(onClick = { onForget(host.hostId) }) { Text(stringResource(R.string.forget)) }
                     }
                 }
             }
         }
     }
+    relayEditor?.let { host ->
+        RelaySettingsDialog(
+            host = host,
+            onDismiss = { relayEditor = null },
+            onSave = { endpoint ->
+                onConfigureRelay(host.hostId, endpoint)
+                relayEditor = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun RelaySettingsDialog(
+    host: HostProfile,
+    onDismiss: () -> Unit,
+    onSave: (String?) -> Unit,
+) {
+    var value by remember(host.hostId, host.relayEndpoint) { mutableStateOf(host.relayEndpoint.orEmpty()) }
+    var error by remember(host.hostId) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.relay_settings)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.relay_explanation))
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it; error = null },
+                    label = { Text(stringResource(R.string.relay_endpoint)) },
+                    placeholder = { Text("relay.example.com:19191") },
+                    isError = error != null,
+                    supportingText = error?.let { message -> ({ Text(message) }) },
+                    singleLine = true,
+                )
+                if (host.relayEndpoint != null) {
+                    TextButton(onClick = { onSave(null) }) { Text(stringResource(R.string.disable_relay)) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                runCatching { RelayEndpoint.parse(value).authority }
+                    .onSuccess(onSave)
+                    .onFailure { error = it.message }
+            }) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 @Composable
@@ -273,7 +364,7 @@ private fun SessionScreen(
     twoPane: Boolean,
     onSelect: (String) -> Unit,
     onDisconnect: () -> Unit,
-    onRetry: (String) -> Unit,
+    onRetry: (HostProfile) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sessions = connection.native.sessions.values.sortedByDescending { it.session.updatedAt }
@@ -309,14 +400,14 @@ private fun SessionList(sessions: List<SessionView>, onSelect: (String) -> Unit,
 }
 
 @Composable
-private fun ConnectionBanner(connection: ConnectionSnapshot, onDisconnect: () -> Unit, onRetry: (String) -> Unit) {
+private fun ConnectionBanner(connection: ConnectionSnapshot, onDisconnect: () -> Unit, onRetry: (HostProfile) -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(connectionPhaseLabel(connection.connection), fontWeight = FontWeight.SemiBold)
                 connection.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
-            if (connection.connection == ConnectionPhase.RETRYING) IconButton(onClick = { connection.host?.hostId?.let(onRetry) }) { Icon(Icons.Default.Refresh, stringResource(R.string.retry)) }
+            if (connection.connection == ConnectionPhase.RETRYING) IconButton(onClick = { connection.host?.let(onRetry) }) { Icon(Icons.Default.Refresh, stringResource(R.string.retry)) }
             IconButton(onClick = onDisconnect) { Icon(Icons.Default.LinkOff, stringResource(R.string.disconnect)) }
         }
     }

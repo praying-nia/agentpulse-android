@@ -7,6 +7,14 @@
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
     <string name="forget">Forget</string>
+    <string name="relay_settings">Relay settings</string>
+    <string name="relay_endpoint">Relay endpoint</string>
+    <string name="relay_endpoint_value">Relay: %1$s</string>
+    <string name="relay_explanation">Optional public route. The Host CA encrypted Native connection remains end-to-end encrypted inside Relay. Saving an endpoint does not select it automatically.</string>
+    <string name="route_lan">LAN</string>
+    <string name="route_relay">Relay</string>
+    <string name="disable_relay">Remove Relay endpoint</string>
+    <string name="save">Save</string>
     <string name="sessions">Sessions</string>
     <string name="no_sessions">No configured sessions</string>
     <string name="select_session">Select a session to view its timeline</string>

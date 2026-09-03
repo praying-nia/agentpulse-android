@@ -51,7 +51,51 @@ data class EventRecord(
     val title: String,
     val detail: String?,
     val importance: EventImportance,
+    val approval: ApprovalPrompt? = null,
+    val terminalInteractionId: String? = null,
     val raw: DomainEnvelope,
+)
+
+sealed interface ApprovalSubject {
+    data class Command(
+        val kind: String,
+        val command: String?,
+        val cwd: String?,
+        val reason: String?,
+        val network: ApprovalNetworkContext?,
+    ) : ApprovalSubject
+
+    data class FileChange(
+        val changes: List<ApprovalFileChange>,
+        val grantRoot: String?,
+        val reason: String?,
+    ) : ApprovalSubject
+}
+
+data class ApprovalNetworkContext(val host: String, val protocol: String)
+
+data class ApprovalFileChange(val path: String, val kind: String, val diff: String)
+
+data class ApprovalOption(
+    val id: String,
+    val disposition: String,
+    val label: String,
+    val description: String?,
+)
+
+enum class ApprovalSubmissionState { READY, SUBMITTING, FAILED }
+
+data class ApprovalPrompt(
+    val id: String,
+    val sessionId: String,
+    val requestedAt: String,
+    val prompt: String,
+    val subject: ApprovalSubject,
+    val options: List<ApprovalOption>,
+    val unavailableReason: String?,
+    val interactive: Boolean = false,
+    val submissionState: ApprovalSubmissionState = ApprovalSubmissionState.READY,
+    val submissionError: String? = null,
 )
 
 sealed interface NativeClientMessage {
@@ -65,12 +109,17 @@ sealed interface NativeClientMessage {
     data class Discover(val requestId: String) : NativeClientMessage
     data class Subscribe(val requestId: String, val sessionId: String) : NativeClientMessage
     data class Unsubscribe(val requestId: String, val sessionId: String) : NativeClientMessage
+    data class SubmitInteractionResponse(
+        val requestId: String,
+        val response: DomainEnvelope,
+    ) : NativeClientMessage
 }
 
 sealed interface NativeDeliveryContext {
     data class DiscoveryProvider(val requestId: String) : NativeDeliveryContext
     data class DiscoverySession(val requestId: String, val lastSequence: ULong) : NativeDeliveryContext
     data class SubscriptionSession(val requestId: String) : NativeDeliveryContext
+    data class SubscriptionInteraction(val requestId: String, val route: String) : NativeDeliveryContext
     data class LiveEvent(val route: String) : NativeDeliveryContext
     data object LiveSession : NativeDeliveryContext
 }
@@ -103,12 +152,19 @@ sealed interface NativeServerMessage {
         val sessionId: String,
         val status: String,
         val baselineSequence: ULong,
+        val pendingInteractionCount: Int,
     ) : NativeServerMessage
 
     data class UnsubscriptionResult(
         val requestId: String,
         val sessionId: String,
         val status: String,
+    ) : NativeServerMessage
+
+    data class InteractionResponseResult(
+        val requestId: String,
+        val sessionId: String,
+        val interactionId: String,
     ) : NativeServerMessage
 
     data class Error(
@@ -162,12 +218,14 @@ data class SessionView(
     val session: SessionSnapshot,
     val cursor: ULong,
     val events: List<EventRecord>,
+    val pendingApprovals: Map<String, ApprovalPrompt> = emptyMap(),
 )
 
 data class NativeState(
     val phase: Phase = Phase.AWAITING_HELLO,
     val providers: Map<String, ProviderSummary> = emptyMap(),
     val sessions: Map<String, SessionView> = emptyMap(),
+    val channelId: String? = null,
     val lastError: String? = null,
 ) {
     enum class Phase { AWAITING_HELLO, DISCOVERING, SUBSCRIBING, LIVE, FAILED }

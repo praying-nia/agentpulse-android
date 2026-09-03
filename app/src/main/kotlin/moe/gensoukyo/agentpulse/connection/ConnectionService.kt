@@ -45,6 +45,7 @@ class ConnectionService : LifecycleService() {
         when (intent?.action) {
             ACTION_CONNECT -> intent.getStringExtra(EXTRA_HOST_ID)?.let(::connect)
             ACTION_DISCONNECT -> disconnect()
+            ACTION_SUBMIT_APPROVAL -> submitApproval(intent)
         }
         return Service.START_NOT_STICKY
     }
@@ -131,6 +132,21 @@ class ConnectionService : LifecycleService() {
         if (stopService) stopSelf()
     }
 
+    private fun submitApproval(intent: Intent) {
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: return
+        val interactionId = intent.getStringExtra(EXTRA_INTERACTION_ID) ?: return
+        val optionId = intent.getStringExtra(EXTRA_OPTION_ID) ?: return
+        val result = client?.submitApproval(sessionId, interactionId, optionId)
+            ?: Result.failure(IllegalStateException(getString(R.string.connection_unavailable)))
+        result.onFailure { error ->
+            ConnectionRuntime.update(
+                ConnectionRuntime.state.value.copy(
+                    error = error.message ?: getString(R.string.approval_submit_failed),
+                ),
+            )
+        }
+    }
+
     private fun notifyImportantEvents(profile: HostProfile, before: NativeState, after: NativeState) {
         after.sessions.forEach { (sessionId, view) ->
             val previous = before.sessions[sessionId]?.cursor ?: 0UL
@@ -187,8 +203,11 @@ class ConnectionService : LifecycleService() {
     companion object {
         const val ACTION_CONNECT = "moe.gensoukyo.agentpulse.CONNECT"
         const val ACTION_DISCONNECT = "moe.gensoukyo.agentpulse.DISCONNECT"
+        const val ACTION_SUBMIT_APPROVAL = "moe.gensoukyo.agentpulse.SUBMIT_APPROVAL"
         const val EXTRA_HOST_ID = "host_id"
         const val EXTRA_SESSION_ID = "session_id"
+        const val EXTRA_INTERACTION_ID = "interaction_id"
+        const val EXTRA_OPTION_ID = "option_id"
         private const val CONNECTION_CHANNEL = "agentpulse-connection"
         private const val EVENT_CHANNEL = "agentpulse-events"
         private const val ONGOING_ID = 101

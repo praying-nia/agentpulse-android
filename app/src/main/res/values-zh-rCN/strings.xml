@@ -1,6 +1,5 @@
 <resources>
     <string name="app_name">AgentPulse</string>
-    <string name="read_only">只读</string>
     <string name="scan_qr">扫描二维码</string>
     <string name="no_hosts">还没有已配对的电脑</string>
     <string name="connect">连接</string>
@@ -21,12 +20,13 @@
     <string name="connection_channel_description">保持与所选电脑的连接</string>
     <string name="connecting_to">正在连接 %1$s</string>
     <string name="connection_lost">与 %1$s 的连接已断开</string>
-    <string name="interaction_waiting">%1$s 需要处理（只读）</string>
+    <string name="interaction_waiting">%1$s 需要审批</string>
     <string name="session_finished">%1$s 已结束</string>
     <string name="camera_permission_required">扫描二维码需要相机权限。</string>
     <string name="local_network_permission_required">连接电脑需要本地网络权限。</string>
     <string name="retry">重试</string>
     <string name="cancel">取消</string>
+    <string name="confirm">确认</string>
     <string name="pairing">正在配对…</string>
     <string name="pairing_failed">配对失败</string>
     <string name="pairing_failed_unknown">连接结束但没有提供错误信息，请扫描新的二维码后重试。</string>
@@ -57,8 +57,24 @@
     <string name="event_tool_activity">工具活动</string>
     <string name="event_plan_updated">计划已更新</string>
     <string name="event_progress_updated">进度已更新</string>
-    <string name="event_interaction_requested">需要交互 · 只读</string>
+    <string name="event_interaction_requested">需要审批</string>
     <string name="event_interaction_responded">交互已响应</string>
+    <string name="event_interaction_closed">交互已关闭</string>
     <string name="event_command_issued">命令已发出</string>
     <string name="event_session_ended">会话已结束</string>
+    <plurals name="pending_approvals">
+        <item quantity="other">%1$d 个待审批请求</item>
+    </plurals>
+    <string name="approval_command">命令执行</string>
+    <string name="approval_write_stdin">终端输入</string>
+    <string name="approval_cwd">工作目录</string>
+    <string name="approval_reason">原因</string>
+    <string name="approval_network">网络目标</string>
+    <string name="approval_file_changes">拟议文件修改</string>
+    <string name="approval_grant_root">请求写入的根目录</string>
+    <string name="approval_submitting">正在等待 Codex…</string>
+    <string name="approval_read_only">此请求只能由另一个 Codex 客户端处理。</string>
+    <string name="approval_confirm">将这个决定发送给 Codex？</string>
+    <string name="approval_submit_failed">无法提交审批结果。</string>
+    <string name="connection_unavailable">Host 连接当前不可用。</string>
 </resources>

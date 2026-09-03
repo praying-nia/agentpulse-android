@@ -1,6 +1,5 @@
 <resources>
     <string name="app_name">AgentPulse</string>
-    <string name="read_only">Read-only</string>
     <string name="scan_qr">Scan QR code</string>
     <string name="no_hosts">No paired computers yet</string>
     <string name="connect">Connect</string>
@@ -21,12 +20,13 @@
     <string name="connection_channel_description">Keeps the selected computer connected</string>
     <string name="connecting_to">Connecting to %1$s</string>
     <string name="connection_lost">Connection to %1$s was lost</string>
-    <string name="interaction_waiting">%1$s needs attention (read-only)</string>
+    <string name="interaction_waiting">%1$s needs approval</string>
     <string name="session_finished">%1$s finished</string>
     <string name="camera_permission_required">Camera permission is required to scan a QR code.</string>
     <string name="local_network_permission_required">Local network permission is required to connect to the Host.</string>
     <string name="retry">Retry</string>
     <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
     <string name="pairing">Pairing…</string>
     <string name="pairing_failed">Pairing failed</string>
     <string name="pairing_failed_unknown">The connection ended without an error message. Scan a new QR code and try again.</string>
@@ -57,8 +57,25 @@
     <string name="event_tool_activity">Tool activity</string>
     <string name="event_plan_updated">Plan updated</string>
     <string name="event_progress_updated">Progress updated</string>
-    <string name="event_interaction_requested">Interaction requested · read-only</string>
+    <string name="event_interaction_requested">Approval requested</string>
     <string name="event_interaction_responded">Interaction responded</string>
+    <string name="event_interaction_closed">Interaction closed</string>
     <string name="event_command_issued">Command issued</string>
     <string name="event_session_ended">Session ended</string>
+    <plurals name="pending_approvals">
+        <item quantity="one">%1$d pending approval</item>
+        <item quantity="other">%1$d pending approvals</item>
+    </plurals>
+    <string name="approval_command">Command execution</string>
+    <string name="approval_write_stdin">Terminal input</string>
+    <string name="approval_cwd">Working directory</string>
+    <string name="approval_reason">Reason</string>
+    <string name="approval_network">Network target</string>
+    <string name="approval_file_changes">Proposed file changes</string>
+    <string name="approval_grant_root">Requested write root</string>
+    <string name="approval_submitting">Waiting for Codex…</string>
+    <string name="approval_read_only">This request can only be resolved from another Codex client.</string>
+    <string name="approval_confirm">Send this decision to Codex?</string>
+    <string name="approval_submit_failed">Could not submit the approval response.</string>
+    <string name="connection_unavailable">The Host connection is unavailable.</string>
 </resources>

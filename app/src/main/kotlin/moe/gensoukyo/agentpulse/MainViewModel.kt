@@ -90,6 +90,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         context.startService(Intent(context, ConnectionService::class.java).apply { action = ConnectionService.ACTION_DISCONNECT })
     }
 
+    fun submitApproval(sessionId: String, interactionId: String, optionId: String) {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, ConnectionService::class.java).apply {
+            action = ConnectionService.ACTION_SUBMIT_APPROVAL
+            putExtra(ConnectionService.EXTRA_SESSION_ID, sessionId)
+            putExtra(ConnectionService.EXTRA_INTERACTION_ID, interactionId)
+            putExtra(ConnectionService.EXTRA_OPTION_ID, optionId)
+        })
+    }
+
     fun forget(hostId: String) {
         viewModelScope.launch {
             if (connection.value.host?.hostId == hostId) disconnect()

@@ -1,6 +1,8 @@
 package moe.gensoukyo.agentpulse.connection
 
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,9 @@ internal class NativeWebSocketClient(
         },
     )
     private val finished = AtomicBoolean(false)
+    private val refreshExecutor = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "agentpulse-session-refresh").apply { isDaemon = true }
+    }
     private var socket: WebSocket? = null
 
     fun connect() {
@@ -81,20 +86,22 @@ internal class NativeWebSocketClient(
                     finish(IllegalStateException("Native frame exceeded the 1 MiB limit"))
                     return
                 }
-                runCatching {
-                    val before = reducer.state
-                    val outgoing = reducer.accept(NativeCodec.decode(text))
-                    val after = reducer.state
-                    onState(after)
-                    onEventState(before, after)
-                    outgoing.forEach {
-                        if (!webSocket.send(NativeCodec.encode(it))) {
-                            throw IllegalStateException("Native client message could not be queued")
+                synchronized(this@NativeWebSocketClient) {
+                    runCatching {
+                        val before = reducer.state
+                        val outgoing = reducer.accept(NativeCodec.decode(text))
+                        val after = reducer.state
+                        onState(after)
+                        onEventState(before, after)
+                        outgoing.forEach {
+                            if (!webSocket.send(NativeCodec.encode(it))) {
+                                throw IllegalStateException("Native client message could not be queued")
+                            }
                         }
+                    }.onFailure {
+                        webSocket.close(1002, "protocol failure")
+                        finish(it)
                     }
-                }.onFailure {
-                    webSocket.close(1002, "protocol failure")
-                    finish(it)
                 }
             }
 
@@ -102,9 +109,35 @@ internal class NativeWebSocketClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finish(null)
         })
+        refreshExecutor.scheduleWithFixedDelay(
+            ::refreshSessions,
+            SESSION_REFRESH_SECONDS,
+            SESSION_REFRESH_SECONDS,
+            TimeUnit.SECONDS,
+        )
     }
 
     suspend fun awaitClose(): Throwable? = completion.await()
+
+    @Synchronized
+    fun submitApproval(sessionId: String, interactionId: String, optionId: String): Result<Unit> =
+        runCatching {
+            val webSocket = socket ?: throw IllegalStateException("Native connection is unavailable")
+            val message = reducer.submitApproval(sessionId, interactionId, optionId)
+            onState(reducer.state)
+            try {
+                if (!webSocket.send(NativeCodec.encode(message))) {
+                    throw IllegalStateException("Approval response could not be queued")
+                }
+            } catch (error: Exception) {
+                reducer.failApprovalSubmission(
+                    message.requestId,
+                    error.message ?: "Approval response could not be queued",
+                )
+                onState(reducer.state)
+                throw error
+            }
+        }
 
     fun close() {
         socket?.close(1000, "user disconnected")
@@ -112,15 +145,29 @@ internal class NativeWebSocketClient(
         finish(null)
     }
 
+    private fun refreshSessions() {
+        if (finished.get()) return
+        synchronized(this@NativeWebSocketClient) {
+            val webSocket = socket ?: return
+            val message = reducer.refreshSessions() ?: return
+            if (!webSocket.send(NativeCodec.encode(message))) {
+                webSocket.cancel()
+                finish(IllegalStateException("Session refresh could not be queued"))
+            }
+        }
+    }
+
     private fun finish(error: Throwable?) {
         if (!finished.compareAndSet(false, true)) return
         completion.complete(error)
+        refreshExecutor.shutdownNow()
         client.connectionPool.evictAll()
         client.dispatcher.executorService.shutdown()
     }
 
     companion object {
         private const val MAX_FRAME_BYTES = 1024 * 1024
+        private const val SESSION_REFRESH_SECONDS = 2L
     }
 }
 

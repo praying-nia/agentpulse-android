@@ -38,6 +38,17 @@ object NativeCodec {
             is NativeClientMessage.Discover -> request("discover_sessions", message.requestId)
             is NativeClientMessage.Subscribe -> sessionRequest("subscribe_session", message.requestId, message.sessionId)
             is NativeClientMessage.Unsubscribe -> sessionRequest("unsubscribe_session", message.requestId, message.sessionId)
+            is NativeClientMessage.SubmitInteractionResponse -> {
+                UuidV7.require(message.requestId, "request_id")
+                if (message.response.type != "interaction_response") {
+                    throw ProtocolException("submit_interaction_response requires an interaction_response domain message")
+                }
+                buildJsonObject {
+                    put("type", "submit_interaction_response")
+                    put("request_id", message.requestId)
+                    put("response", DomainCodec.encodeElement(message.response))
+                }
+            }
         }
         return json.encodeToString(JsonElement.serializer(), buildJsonObject {
             put("native_transport_version", NATIVE_TRANSPORT_VERSION)
@@ -68,12 +79,13 @@ object NativeCodec {
                 message.exact(setOf("type", "request_id")); NativeServerMessage.SyncCompleted(uuid(message, "request_id"))
             }
             "subscription_result" -> {
-                message.exact(setOf("type", "request_id", "session_id", "status", "baseline_sequence"))
+                message.exact(setOf("type", "request_id", "session_id", "status", "baseline_sequence", "pending_interaction_count"))
                 NativeServerMessage.SubscriptionResult(
                     uuid(message, "request_id"),
                     uuid(message, "session_id"),
                     message.enum("status", setOf("subscribed", "already_subscribed")),
                     message.u64("baseline_sequence"),
+                    nonnegativeInt(message, "pending_interaction_count"),
                 )
             }
             "unsubscription_result" -> {
@@ -82,6 +94,14 @@ object NativeCodec {
                     uuid(message, "request_id"),
                     uuid(message, "session_id"),
                     message.enum("status", setOf("unsubscribed", "not_subscribed")),
+                )
+            }
+            "interaction_response_result" -> {
+                message.exact(setOf("type", "request_id", "session_id", "interaction_id"))
+                NativeServerMessage.InteractionResponseResult(
+                    uuid(message, "request_id"),
+                    uuid(message, "session_id"),
+                    uuid(message, "interaction_id"),
                 )
             }
             "error" -> decodeError(message)
@@ -93,6 +113,10 @@ object NativeCodec {
         message.exact(setOf("type", "connection_id", "channel", "protocol_version", "max_frame_bytes", "ping_interval_seconds", "idle_timeout_seconds"))
         val channel = DomainCodec.decode(message.getValue("channel"))
         if (channel.type != "channel_descriptor") throw ProtocolException("server hello channel must be a channel descriptor")
+        val capabilities = channel.payload.array("capabilities").map { it.stringValue("capability") }.toSet()
+        if (capabilities != setOf("notification", "session_view", "approval", "realtime_sync")) {
+            throw ProtocolException("Native v1 channel capabilities are incompatible")
+        }
         val protocolVersion = message.int("protocol_version")
         if (protocolVersion != DOMAIN_PROTOCOL_VERSION) throw ProtocolException("server selected unsupported domain protocol")
         val max = positiveInt(message, "max_frame_bytes")
@@ -112,8 +136,15 @@ object NativeCodec {
         "subscription_session" -> {
             context.exact(setOf("type", "request_id")); NativeDeliveryContext.SubscriptionSession(uuid(context, "request_id"))
         }
+        "subscription_interaction" -> {
+            context.exact(setOf("type", "request_id", "route"))
+            NativeDeliveryContext.SubscriptionInteraction(
+                uuid(context, "request_id"),
+                context.enum("route", EVENT_ROUTES),
+            )
+        }
         "live_event" -> {
-            context.exact(setOf("type", "route")); NativeDeliveryContext.LiveEvent(context.enum("route", setOf("observe_only", "interaction_read_only")))
+            context.exact(setOf("type", "route")); NativeDeliveryContext.LiveEvent(context.enum("route", EVENT_ROUTES))
         }
         "live_session" -> {
             context.exact(setOf("type")); NativeDeliveryContext.LiveSession
@@ -127,7 +158,11 @@ object NativeCodec {
             null, JsonNull -> null
             else -> UuidV7.require(value.stringValue("request_id"), "request_id")
         }
-        val allowed = setOf("connection_busy", "invalid_handshake", "invalid_request", "session_not_discovered", "session_not_found", "read_only", "internal")
+        val allowed = setOf(
+            "connection_busy", "invalid_handshake", "invalid_request", "session_not_discovered",
+            "session_not_found", "internal", "capability_unavailable",
+            "interaction_not_pending", "session_not_subscribed", "provider_rejected",
+        )
         return NativeServerMessage.Error(requestId, message.enum("code", allowed), message.nonblank("message"), message.boolean("recoverable"))
     }
 
@@ -145,4 +180,6 @@ object NativeCodec {
     private fun nonnegativeInt(value: JsonObject, field: String): Int = value[field]?.let { (it as? JsonPrimitive)?.longOrNull }?.takeIf { it in 0..Int.MAX_VALUE }?.toInt() ?: throw ProtocolException("$field must be a nonnegative integer")
     private fun positiveInt(value: JsonObject, field: String): Int = nonnegativeInt(value, field).takeIf { it > 0 } ?: throw ProtocolException("$field must be positive")
     private fun positiveLong(value: JsonObject, field: String): Long = value[field]?.let { (it as? JsonPrimitive)?.longOrNull }?.takeIf { it > 0 } ?: throw ProtocolException("$field must be positive")
+
+    private val EVENT_ROUTES = setOf("observe_only", "interaction_read_only", "interaction_interactive")
 }

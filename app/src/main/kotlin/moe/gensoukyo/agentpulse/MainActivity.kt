@@ -66,8 +66,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -83,6 +85,9 @@ import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.pairing.QrScanner
 import moe.gensoukyo.agentpulse.protocol.EventImportance
 import moe.gensoukyo.agentpulse.protocol.EventRecord
+import moe.gensoukyo.agentpulse.protocol.ApprovalPrompt
+import moe.gensoukyo.agentpulse.protocol.ApprovalSubject
+import moe.gensoukyo.agentpulse.protocol.ApprovalSubmissionState
 import moe.gensoukyo.agentpulse.protocol.SessionView
 
 class MainActivity : ComponentActivity() {
@@ -186,14 +191,30 @@ private fun AgentPulseApp(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.sessions))
                         }
                     },
-                    actions = { AssistChip(onClick = {}, label = { Text(stringResource(R.string.read_only)) }) },
+                    actions = {
+                        val pending = selected?.pendingApprovals?.size ?: 0
+                        if (pending > 0) {
+                            AssistChip(
+                                onClick = {},
+                                label = {
+                                    Text(
+                                        pluralStringResource(
+                                            R.plurals.pending_approvals,
+                                            pending,
+                                            pending,
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                    },
                 )
             },
         ) { padding ->
             when {
-                connection.host != null && twoPane -> SessionScreen(connection, selected, true, viewModel::selectSession, viewModel::disconnect, onConnect, Modifier.padding(padding))
-                selected != null -> SessionDetail(selected, connection, Modifier.padding(padding))
-                connection.host != null -> SessionScreen(connection, null, false, viewModel::selectSession, viewModel::disconnect, onConnect, Modifier.padding(padding))
+                connection.host != null && twoPane -> SessionScreen(connection, selected, true, viewModel::selectSession, viewModel::disconnect, onConnect, viewModel::submitApproval, Modifier.padding(padding))
+                selected != null -> SessionDetail(selected, connection, viewModel::submitApproval, Modifier.padding(padding))
+                connection.host != null -> SessionScreen(connection, null, false, viewModel::selectSession, viewModel::disconnect, onConnect, viewModel::submitApproval, Modifier.padding(padding))
                 else -> HostScreen(
                     app.hosts,
                     onScanQr,
@@ -335,6 +356,7 @@ private fun SessionScreen(
     onSelect: (String) -> Unit,
     onDisconnect: () -> Unit,
     onRetry: (HostProfile) -> Unit,
+    onSubmitApproval: (String, String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sessions = connection.native.sessions.values.sortedByDescending { it.session.updatedAt }
@@ -353,7 +375,7 @@ private fun SessionScreen(
                         Text(stringResource(R.string.select_session))
                     }
                 } else {
-                    SessionDetail(selected, connection, Modifier.weight(0.58f).fillMaxHeight())
+                    SessionDetail(selected, connection, onSubmitApproval, Modifier.weight(0.58f).fillMaxHeight())
                 }
             }
         } else {
@@ -392,12 +414,29 @@ private fun SessionCard(view: SessionView, onClick: () -> Unit) {
             Text("${sessionStateLabel(view.session.state)} · ${sessionConnectionLabel(view.session.connectionState)}", color = MaterialTheme.colorScheme.primary)
             view.session.workspaceName?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.cursor, view.cursor.toString()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (view.pendingApprovals.isNotEmpty()) {
+                Text(
+                    pluralStringResource(
+                        R.plurals.pending_approvals,
+                        view.pendingApprovals.size,
+                        view.pendingApprovals.size,
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun SessionDetail(view: SessionView, connection: ConnectionSnapshot, modifier: Modifier = Modifier) {
+private fun SessionDetail(
+    view: SessionView,
+    connection: ConnectionSnapshot,
+    onSubmitApproval: (String, String, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
@@ -406,6 +445,11 @@ private fun SessionDetail(view: SessionView, connection: ConnectionSnapshot, mod
                     LabelValue(stringResource(R.string.workspace), view.session.workspaceName ?: view.session.workspacePath ?: "—")
                     LabelValue(stringResource(R.string.provider), connection.native.providers[view.session.providerId]?.displayName ?: view.session.providerId)
                 }
+            }
+        }
+        items(view.pendingApprovals.values.toList(), key = ApprovalPrompt::id) { approval ->
+            ApprovalCard(approval) { optionId ->
+                onSubmitApproval(view.session.id, approval.id, optionId)
             }
         }
         itemsIndexed(view.events, key = { _, event -> event.id }) { _, event ->
@@ -423,6 +467,107 @@ private fun SessionDetail(view: SessionView, connection: ConnectionSnapshot, mod
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ApprovalCard(approval: ApprovalPrompt, onSubmit: (String) -> Unit) {
+    var confirmingOptionId by remember(approval.id) { mutableStateOf<String?>(null) }
+    val confirming = approval.options.firstOrNull { it.id == confirmingOptionId }
+    ElevatedCard(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(approval.prompt, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            when (val subject = approval.subject) {
+                is ApprovalSubject.Command -> {
+                    Text(
+                        if (subject.kind == "write_stdin") stringResource(R.string.approval_write_stdin)
+                        else stringResource(R.string.approval_command),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    subject.command?.let {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(it, Modifier.padding(10.dp), fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                    subject.cwd?.let { LabelValue(stringResource(R.string.approval_cwd), it) }
+                    subject.reason?.let { LabelValue(stringResource(R.string.approval_reason), it) }
+                    subject.network?.let {
+                        LabelValue(
+                            stringResource(R.string.approval_network),
+                            "${it.protocol}://${it.host}",
+                        )
+                    }
+                }
+                is ApprovalSubject.FileChange -> {
+                    Text(stringResource(R.string.approval_file_changes), style = MaterialTheme.typography.labelLarge)
+                    subject.grantRoot?.let { LabelValue(stringResource(R.string.approval_grant_root), it) }
+                    subject.reason?.let { LabelValue(stringResource(R.string.approval_reason), it) }
+                    subject.changes.forEach { change ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("${change.kind} · ${change.path}", fontWeight = FontWeight.SemiBold)
+                                Text(change.diff, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+            approval.unavailableReason?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            approval.submissionError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            if (approval.submissionState == ApprovalSubmissionState.SUBMITTING) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
+                    Text(stringResource(R.string.approval_submitting))
+                }
+            } else if (approval.interactive && approval.options.isNotEmpty()) {
+                approval.options.forEach { option ->
+                    val click = { confirmingOptionId = option.id }
+                    if (option.disposition == "approve") {
+                        Button(onClick = click, modifier = Modifier.fillMaxWidth()) { Text(option.label) }
+                    } else {
+                        OutlinedButton(onClick = click, modifier = Modifier.fillMaxWidth()) { Text(option.label) }
+                    }
+                    option.description?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (approval.unavailableReason == null) {
+                Text(stringResource(R.string.approval_read_only), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    confirming?.let { option ->
+        AlertDialog(
+            onDismissRequest = { confirmingOptionId = null },
+            title = { Text(option.label) },
+            text = { Text(option.description ?: stringResource(R.string.approval_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingOptionId = null
+                    onSubmit(option.id)
+                }) { Text(stringResource(R.string.confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingOptionId = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }
 
@@ -471,6 +616,7 @@ private fun eventTitle(event: EventRecord): String = stringResource(
         "progress_updated" -> R.string.event_progress_updated
         "interaction_requested" -> R.string.event_interaction_requested
         "interaction_responded" -> R.string.event_interaction_responded
+        "interaction_closed" -> R.string.event_interaction_closed
         "command_issued" -> R.string.event_command_issued
         else -> R.string.event_session_ended
     },

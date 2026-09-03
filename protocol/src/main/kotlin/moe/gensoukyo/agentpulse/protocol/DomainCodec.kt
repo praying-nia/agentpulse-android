@@ -33,18 +33,20 @@ object DomainCodec {
         return envelope
     }
 
-    fun encode(message: DomainEnvelope): String {
+    fun encode(message: DomainEnvelope): String = json.encodeToString(
+        JsonElement.serializer(),
+        encodeElement(message),
+    )
+
+    fun encodeElement(message: DomainEnvelope): JsonElement {
         validate(message)
-        return json.encodeToString(
-            JsonElement.serializer(),
-            buildJsonObject {
-                put("protocol_version", DOMAIN_PROTOCOL_VERSION)
-                put("message", buildJsonObject {
-                    put("type", message.type)
-                    put("payload", message.payload)
-                })
-            },
-        )
+        return buildJsonObject {
+            put("protocol_version", DOMAIN_PROTOCOL_VERSION)
+            put("message", buildJsonObject {
+                put("type", message.type)
+                put("payload", message.payload)
+            })
+        }
     }
 
     fun session(message: DomainEnvelope): SessionSnapshot {
@@ -79,21 +81,76 @@ object DomainCodec {
         )
     }
 
+    fun channelId(message: DomainEnvelope): String {
+        if (message.type != "channel_descriptor") throw ProtocolException("expected channel_descriptor")
+        return UuidV7.require(message.payload.string("id"), "channel.id")
+    }
+
+    fun approvalRequest(message: DomainEnvelope): ApprovalPrompt {
+        if (message.type != "interaction_request") throw ProtocolException("expected interaction_request")
+        return interactionRequest(message.payload)
+            ?: throw ProtocolException("interaction request is not an approval")
+    }
+
+    fun approvalResponse(
+        requestId: String,
+        sessionId: String,
+        channelId: String,
+        optionId: String,
+        respondedAt: Instant = Instant.now(),
+    ): DomainEnvelope = DomainEnvelope(
+        type = "interaction_response",
+        payload = buildJsonObject {
+            put("request_id", UuidV7.require(requestId, "response.request_id"))
+            put("session_id", UuidV7.require(sessionId, "response.session_id"))
+            put("channel_id", UuidV7.require(channelId, "response.channel_id"))
+            put("responded_at", respondedAt.toString())
+            put("payload", buildJsonObject {
+                put("type", "approval")
+                put("option_id", UuidV7.require(optionId, "approval.option_id"))
+            })
+        },
+    ).also(::validate)
+
     fun event(message: DomainEnvelope): EventRecord {
         if (message.type != "agent_event") throw ProtocolException("expected agent_event")
         val payload = message.payload
         val eventPayload = payload.objectField("payload")
         val type = eventPayload.string("type")
+        val sessionId = payload.string("session_id")
         val presentation = eventPresentation(type, eventPayload)
+        val approval = if (type == "interaction_requested") {
+            interactionRequest(eventPayload.objectField("request"))
+        } else {
+            null
+        }
+        val embeddedSessionId = when (type) {
+            "session_started" -> eventPayload.objectField("session").string("id")
+            "interaction_requested" -> eventPayload.objectField("request").string("session_id")
+            "interaction_responded" -> eventPayload.objectField("response").string("session_id")
+            "interaction_closed" -> eventPayload.objectField("interaction").string("session_id")
+            "command_issued" -> eventPayload.objectField("command").string("session_id")
+            else -> null
+        }
+        if (embeddedSessionId != null && embeddedSessionId != sessionId) {
+            throw ProtocolException("event payload session mismatch")
+        }
+        val terminalInteractionId = when (type) {
+            "interaction_responded" -> eventPayload.objectField("response").string("request_id")
+            "interaction_closed" -> eventPayload.objectField("interaction").string("request_id")
+            else -> null
+        }
         return EventRecord(
             id = payload.string("id"),
-            sessionId = payload.string("session_id"),
+            sessionId = sessionId,
             sequence = payload.u64("sequence"),
             occurredAt = payload.string("occurred_at"),
             type = type,
             title = presentation.first,
             detail = presentation.second,
             importance = presentation.third,
+            approval = approval,
+            terminalInteractionId = terminalInteractionId,
             raw = message,
         )
     }
@@ -104,6 +161,7 @@ object DomainCodec {
             "channel_descriptor" -> descriptor(message.payload, provider = false)
             "agent_session" -> sessionPayload(message.payload)
             "agent_event" -> eventPayload(message.payload)
+            "interaction_request" -> interactionRequest(message.payload)
             "interaction_response" -> interactionResponse(message.payload)
             "agent_command" -> command(message.payload)
             else -> throw ProtocolException("unknown domain message type ${message.type}")
@@ -181,6 +239,9 @@ object DomainCodec {
             "interaction_responded" -> {
                 payload.exact(setOf("type", "response")); interactionResponse(payload.objectField("response"))
             }
+            "interaction_closed" -> {
+                payload.exact(setOf("type", "interaction")); interactionClosed(payload.objectField("interaction"))
+            }
             "command_issued" -> {
                 payload.exact(setOf("type", "command")); command(payload.objectField("command"))
             }
@@ -188,6 +249,17 @@ object DomainCodec {
                 payload.exact(setOf("type", "outcome")); outcome(payload.objectField("outcome"))
             }
             else -> throw ProtocolException("unknown event payload type ${payload.string("type")}")
+        }
+        val embeddedSessionId = when (payload.string("type")) {
+            "session_started" -> payload.objectField("session").string("id")
+            "interaction_requested" -> payload.objectField("request").string("session_id")
+            "interaction_responded" -> payload.objectField("response").string("session_id")
+            "interaction_closed" -> payload.objectField("interaction").string("session_id")
+            "command_issued" -> payload.objectField("command").string("session_id")
+            else -> null
+        }
+        if (embeddedSessionId != null && embeddedSessionId != value.string("session_id")) {
+            throw ProtocolException("event payload session mismatch")
         }
     }
 
@@ -239,16 +311,49 @@ object DomainCodec {
         }
     }
 
-    private fun interactionRequest(value: JsonObject) {
+    private fun interactionRequest(value: JsonObject): ApprovalPrompt? {
         value.exact(setOf("id", "session_id", "requested_at", "prompt", "payload"), setOf("expires_at"))
         UuidV7.require(value.string("id"), "interaction.id")
         UuidV7.require(value.string("session_id"), "interaction.session_id")
-        value.instant("requested_at"); value.optionalString("expires_at")?.let(::parseInstant)
+        val requestedAt = value.instant("requested_at")
+        value.optionalString("expires_at")?.let(::parseInstant)?.let { expiresAt ->
+            if (!expiresAt.isAfter(requestedAt)) {
+                throw ProtocolException("interaction expiration must be after its request time")
+            }
+        }
         value.nonblank("prompt")
         val payload = value.objectField("payload")
         when (payload.string("type")) {
             "approval" -> {
-                payload.exact(setOf("type", "allowed_scopes")); payload.array("allowed_scopes").uniqueStrings("allowed_scopes", APPROVAL_SCOPES)
+                payload.exact(setOf("type", "subject", "options"), setOf("unavailable_reason"))
+                val subject = approvalSubject(payload.objectField("subject"))
+                val optionIds = mutableSetOf<String>()
+                val options = payload.array("options").map { element ->
+                    val option = element.objectValue("approval option")
+                    option.exact(setOf("id", "disposition", "label"), setOf("description"))
+                    val id = UuidV7.require(option.string("id"), "approval.option.id")
+                    if (!optionIds.add(id)) throw ProtocolException("duplicate approval option")
+                    ApprovalOption(
+                        id = id,
+                        disposition = option.enum("disposition", APPROVAL_DISPOSITIONS),
+                        label = option.nonblank("label"),
+                        description = option.optionalString("description")?.requireNotBlank("approval.description"),
+                    )
+                }
+                val unavailable = payload.optionalString("unavailable_reason")
+                    ?.requireNotBlank("approval.unavailable_reason")
+                if ((unavailable == null) == options.isEmpty()) {
+                    throw ProtocolException("approval must be either actionable or explicitly unavailable")
+                }
+                return ApprovalPrompt(
+                    id = value.string("id"),
+                    sessionId = value.string("session_id"),
+                    requestedAt = value.string("requested_at"),
+                    prompt = value.string("prompt"),
+                    subject = subject,
+                    options = options,
+                    unavailableReason = unavailable,
+                )
             }
             "choice" -> {
                 payload.exact(setOf("type", "options", "multiple")); payload.boolean("multiple")
@@ -269,6 +374,41 @@ object DomainCodec {
             }
             else -> throw ProtocolException("unknown interaction request")
         }
+        return null
+    }
+
+    private fun approvalSubject(value: JsonObject): ApprovalSubject = when (value.string("type")) {
+        "command" -> {
+            value.exact(setOf("type", "kind"), setOf("command", "cwd", "reason", "network"))
+            val network = value.optionalObject("network")?.let {
+                it.exact(setOf("host", "protocol"))
+                ApprovalNetworkContext(it.nonblank("host"), it.nonblank("protocol"))
+            }
+            ApprovalSubject.Command(
+                kind = value.enum("kind", APPROVAL_COMMAND_KINDS),
+                command = value.optionalString("command")?.requireNotBlank("approval.command"),
+                cwd = value.optionalString("cwd")?.requireNotBlank("approval.cwd"),
+                reason = value.optionalString("reason")?.requireNotBlank("approval.reason"),
+                network = network,
+            )
+        }
+        "file_change" -> {
+            value.exact(setOf("type", "changes"), setOf("grant_root", "reason"))
+            ApprovalSubject.FileChange(
+                changes = value.array("changes").map { element ->
+                    val change = element.objectValue("file change")
+                    change.exact(setOf("path", "kind", "diff"))
+                    ApprovalFileChange(
+                        path = change.nonblank("path"),
+                        kind = change.enum("kind", APPROVAL_FILE_CHANGE_KINDS),
+                        diff = change.string("diff"),
+                    )
+                },
+                grantRoot = value.optionalString("grant_root")?.requireNotBlank("approval.grant_root"),
+                reason = value.optionalString("reason")?.requireNotBlank("approval.reason"),
+            )
+        }
+        else -> throw ProtocolException("unknown approval subject")
     }
 
     private fun interactionResponse(value: JsonObject) {
@@ -280,7 +420,8 @@ object DomainCodec {
         val payload = value.objectField("payload")
         when (payload.string("type")) {
             "approval" -> {
-                payload.exact(setOf("type", "decision")); approvalDecision(payload.objectField("decision"))
+                payload.exact(setOf("type", "option_id"))
+                UuidV7.require(payload.string("option_id"), "approval.option_id")
             }
             "choice" -> {
                 payload.exact(setOf("type", "option_ids")); payload.array("option_ids").forEach {
@@ -294,16 +435,11 @@ object DomainCodec {
         }
     }
 
-    private fun approvalDecision(value: JsonObject) {
-        when (value.string("type")) {
-            "approved" -> {
-                value.exact(setOf("type", "scope")); value.enum("scope", APPROVAL_SCOPES)
-            }
-            "rejected" -> {
-                value.exact(setOf("type"), setOf("reason")); value.optionalString("reason")?.requireNotBlank("rejection.reason")
-            }
-            else -> throw ProtocolException("unknown approval decision")
-        }
+    private fun interactionClosed(value: JsonObject) {
+        value.exact(setOf("request_id", "session_id", "reason"))
+        UuidV7.require(value.string("request_id"), "interaction_closed.request_id")
+        UuidV7.require(value.string("session_id"), "interaction_closed.session_id")
+        value.enum("reason", INTERACTION_CLOSE_REASONS)
     }
 
     private fun command(value: JsonObject) {
@@ -352,8 +488,9 @@ object DomainCodec {
         }
         "plan_updated" -> Triple("Plan updated", payload.objectField("plan").optionalString("explanation"), EventImportance.NORMAL)
         "progress_updated" -> Triple("Progress updated", payload.objectField("progress").optionalString("message"), EventImportance.NORMAL)
-        "interaction_requested" -> Triple("Interaction requested · read-only", payload.objectField("request").string("prompt"), EventImportance.INTERACTION)
+        "interaction_requested" -> Triple("Approval requested", payload.objectField("request").string("prompt"), EventImportance.INTERACTION)
         "interaction_responded" -> Triple("Interaction responded", null, EventImportance.NORMAL)
+        "interaction_closed" -> Triple("Interaction closed", payload.objectField("interaction").string("reason"), EventImportance.NORMAL)
         "command_issued" -> Triple("Command issued", payload.objectField("command").objectField("payload").string("type"), EventImportance.NORMAL)
         "session_ended" -> payload.objectField("outcome").let {
             Triple("Session ${it.string("type")}", it.optionalString("summary") ?: it.optionalString("error") ?: it.optionalString("reason"), EventImportance.OUTCOME)
@@ -368,7 +505,10 @@ object DomainCodec {
     private val MESSAGE_LEVELS = setOf("info", "warning", "error")
     private val TOOL_OUTCOMES = setOf("succeeded", "failed", "cancelled")
     private val PLAN_STATUSES = setOf("pending", "in_progress", "completed", "blocked", "skipped")
-    private val APPROVAL_SCOPES = setOf("once", "session")
+    private val APPROVAL_DISPOSITIONS = setOf("approve", "reject", "cancel")
+    private val APPROVAL_COMMAND_KINDS = setOf("command", "write_stdin")
+    private val APPROVAL_FILE_CHANGE_KINDS = setOf("add", "delete", "update")
+    private val INTERACTION_CLOSE_REASONS = setOf("resolved_elsewhere", "provider_cancelled")
 }
 
 internal fun JsonElement.objectValue(field: String): JsonObject = this as? JsonObject ?: throw ProtocolException("$field must be an object")

@@ -1,8 +1,8 @@
 # agentpulse-android
 
-Native Android client for the complete read-only AgentPulse path.
+Native Android client for AgentPulse observation and Codex approvals.
 
-The app securely pairs with an `agentpulse` Host only by scanning its terminal QR code. The QR bootstrap travels through the authenticated public Relay without USB, ADB, Bluetooth, or a shared LAN. Android stores only encrypted Host credentials in Android Keystore-backed storage and immediately selects the QR-supplied Relay. The Relay sees only authenticated routes and opaque, end-to-end Host TLS bytes. The app never persists Session/Event data and exposes no approval, input, command, or Provider write-back behavior.
+The app securely pairs with an `agentpulse` Host only by scanning its terminal QR code. The QR bootstrap travels through the authenticated public Relay without USB, ADB, Bluetooth, or a shared LAN. Android stores only encrypted Host credentials in Android Keystore-backed storage and immediately selects the QR-supplied Relay. The Relay sees only authenticated routes and opaque, end-to-end Host TLS bytes. Session/Event and pending-approval state is process-only; the app can return command-execution and file-change approval options but exposes no prompt, text/choice, standalone Session-cancel, or arbitrary command input.
 
 ## Requirements and build
 
@@ -25,9 +25,9 @@ The debug APK is written under `app/build/outputs/apk/debug/`. CI validates the 
 3. Confirm the device name and UUID on the Host terminal.
 4. Successful approval stores and selects the QR Relay endpoint and starts connecting automatically. LAN remains an explicit post-pairing alternative and may require Android 16/API 37 local-network permission.
 
-The initial Relay route is an explicit property of the scanned QR. Subsequent route changes and reconnects are explicit user actions; there is no silent LAN/Relay fallback. The connected-device foreground service keeps the chosen route alive and retries it with bounded jittered backoff. LAN mode can rediscover a changed private endpoint with mDNS. Disconnect stops the service. Warning, failure, read-only interaction, completion, and connection-loss notifications are grouped; ordinary event traffic stays in the app.
+The initial Relay route is an explicit property of the scanned QR. Subsequent route changes and reconnects are explicit user actions; there is no silent LAN/Relay fallback. The connected-device foreground service keeps the chosen route alive and retries it with bounded jittered backoff. LAN mode can rediscover a changed private endpoint with mDNS. Disconnect stops the service. Warning, failure, pending approval, completion, and connection-loss notifications are grouped; ordinary event traffic stays in the app.
 
-Phone layouts use list/detail navigation; expanded windows use a two-pane timeline. English and Simplified Chinese resources, light/dark themes, dynamic color, screen-reader descriptions for actions, and a read-only capability marker are included.
+Phone layouts use list/detail navigation; expanded windows use a two-pane timeline. Approval cards show the exact command/network target or every proposed path and diff, render all Provider-issued options dynamically, require confirmation, and disable duplicate submission while awaiting Codex resolution. English and Simplified Chinese resources, light/dark themes, dynamic color, and screen-reader descriptions for actions are included.
 
 ## Security and data boundary
 
@@ -37,7 +37,7 @@ Phone layouts use list/detail navigation; expanded windows use a two-pane timeli
 - Relay route IDs and proofs are domain-separated HMAC values derived from the existing device credential and canonical Relay endpoint. The outer connection uses publicly trusted TLS with hostname validation; the inner Native connection still validates the Host CA and never exposes its bearer token or Session/Event plaintext to Relay.
 - Host profiles and tokens are encrypted with AES-256-GCM using a non-exportable Android Keystore key. Backup is disabled.
 - Forgetting a Host removes the local credential. Use `agentpulse devices revoke` to invalidate it on the Host as well.
-- Session snapshots and the latest 256 Events per Session exist only in process memory and disappear on disconnect/process death.
+- Session snapshots, the latest 256 Events per Session, pending approvals, and submission correlation exist only in process memory and disappear on disconnect/process death.
 
 ## Signed releases
 

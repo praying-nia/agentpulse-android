@@ -52,6 +52,9 @@
     <string name="updated">Updated</string>
     <string name="message_placeholder">Send a message…</string>
     <string name="send">Send</string>
+    <string name="command_sending">Waiting for Host confirmation…</string>
+    <string name="command_invalid">Unknown command or missing required argument.</string>
+    <string name="command_waiting_for_connection">Waiting for the Host connection…</string>
     <string name="plan_on">Enable Plan mode</string>
     <string name="plan_off">Disable Plan mode</string>
     <string name="workspace">Workspace</string>

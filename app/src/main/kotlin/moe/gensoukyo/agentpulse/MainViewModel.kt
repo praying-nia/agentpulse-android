@@ -139,15 +139,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
-    fun submitCommand(sessionId: String, payload: AgentCommandPayload) {
-        val channelId = connection.value.native.channelId ?: return
-        val command = DomainCodec.command(UuidV7.generate(), sessionId, channelId, payload)
+    fun submitCommand(sessionId: String, payload: AgentCommandPayload): String? {
+        if (connection.value.native.phase != moe.gensoukyo.agentpulse.protocol.NativeState.Phase.LIVE) return null
+        val channelId = connection.value.native.channelId ?: return null
+        val commandId = UuidV7.generate()
+        val requestId = UuidV7.generate()
+        val command = DomainCodec.command(commandId, sessionId, channelId, payload)
         val context = getApplication<Application>()
         context.startService(Intent(context, ConnectionService::class.java).apply {
             action = ConnectionService.ACTION_SUBMIT_COMMAND
             putExtra(ConnectionService.EXTRA_COMMAND_JSON, DomainCodec.encode(command))
+            putExtra(ConnectionService.EXTRA_COMMAND_REQUEST_ID, requestId)
+            putExtra(ConnectionService.EXTRA_COMMAND_ID, commandId)
+            putExtra(ConnectionService.EXTRA_SESSION_ID, sessionId)
         })
+        return commandId
     }
+
+    fun consumeCommand(commandId: String) = ConnectionRuntime.consumeCommand(commandId)
 
     fun forget(hostId: String) {
         viewModelScope.launch {

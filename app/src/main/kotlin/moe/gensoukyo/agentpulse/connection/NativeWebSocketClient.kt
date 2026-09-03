@@ -29,6 +29,7 @@ internal class NativeWebSocketClient(
     initialState: NativeState,
     private val onState: (NativeState) -> Unit,
     private val onEventState: (NativeState, NativeState) -> Unit,
+    private val onCommandSubmission: (CommandSubmission) -> Unit,
 ) {
     private val completion = CompletableDeferred<Throwable?>()
     private val reducer = NativeSessionReducer(initialState = initialState)
@@ -50,6 +51,7 @@ internal class NativeWebSocketClient(
         Thread(task, "agentpulse-session-refresh").apply { isDaemon = true }
     }
     private var socket: WebSocket? = null
+    private val commandTracker = CommandSubmissionTracker()
 
     fun connect() {
         val request = Request.Builder()
@@ -95,8 +97,10 @@ internal class NativeWebSocketClient(
                 }
                 synchronized(this@NativeWebSocketClient) {
                     runCatching {
+                        val decoded = NativeCodec.decode(text)
+                        if (handleCommandControl(decoded)) return@runCatching
                         val before = reducer.state
-                        val outgoing = reducer.accept(NativeCodec.decode(text))
+                        val outgoing = reducer.accept(decoded)
                         val after = reducer.state
                         onState(after)
                         onEventState(before, after)
@@ -167,11 +171,23 @@ internal class NativeWebSocketClient(
     }
 
     @Synchronized
-    fun submitCommand(command: DomainEnvelope): Result<Unit> = runCatching {
+    fun submitCommand(
+        requestId: String,
+        commandId: String,
+        sessionId: String,
+        command: DomainEnvelope,
+    ): Result<Unit> = runCatching {
         val webSocket = socket ?: throw IllegalStateException("Native connection is unavailable")
-        val message = NativeClientMessage.SubmitCommand(UuidV7.generate(), command)
-        if (!webSocket.send(NativeCodec.encode(message))) {
-            throw IllegalStateException("Command could not be queued")
+        onCommandSubmission(commandTracker.begin(requestId, commandId, sessionId))
+        try {
+            val message = NativeClientMessage.SubmitCommand(requestId, command)
+            if (!webSocket.send(NativeCodec.encode(message))) {
+                throw IllegalStateException("Command could not be queued")
+            }
+        } catch (error: Exception) {
+            commandTracker.fail(requestId, error.message ?: "Command could not be queued")
+                ?.let(onCommandSubmission)
+            throw error
         }
     }
 
@@ -193,8 +209,26 @@ internal class NativeWebSocketClient(
         }
     }
 
+    @Synchronized
+    private fun handleCommandControl(message: moe.gensoukyo.agentpulse.protocol.NativeServerMessage): Boolean {
+        val requestId = when (message) {
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.CommandResult -> message.requestId
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.Error -> message.requestId
+            else -> null
+        } ?: return false
+        val submission = commandTracker.complete(message) ?: return false
+        onCommandSubmission(submission)
+        return true
+    }
+
+    @Synchronized
+    private fun failPendingCommands(message: String) {
+        commandTracker.failAll(message).forEach(onCommandSubmission)
+    }
+
     private fun finish(error: Throwable?) {
         if (!finished.compareAndSet(false, true)) return
+        failPendingCommands(error?.message ?: "Connection closed before Host confirmation")
         completion.complete(error)
         refreshExecutor.shutdownNow()
         client.connectionPool.evictAll()
@@ -207,12 +241,76 @@ internal class NativeWebSocketClient(
     }
 }
 
+private data class PendingCommand(val commandId: String, val sessionId: String)
+
+internal class CommandSubmissionTracker {
+    private val pending = mutableMapOf<String, PendingCommand>()
+
+    fun begin(requestId: String, commandId: String, sessionId: String): CommandSubmission {
+        check(pending.putIfAbsent(requestId, PendingCommand(commandId, sessionId)) == null) {
+            "Command request is already pending"
+        }
+        return CommandSubmission(commandId, sessionId, CommandSubmissionPhase.SENDING)
+    }
+
+    fun complete(message: moe.gensoukyo.agentpulse.protocol.NativeServerMessage): CommandSubmission? {
+        val requestId = when (message) {
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.CommandResult -> message.requestId
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.Error -> message.requestId
+            else -> null
+        } ?: return null
+        val command = pending[requestId] ?: return null
+        return when (message) {
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.CommandResult -> {
+                check(message.commandId == command.commandId && message.sessionId == command.sessionId) {
+                    "Command result correlation mismatch"
+                }
+                pending.remove(requestId)
+                CommandSubmission(command.commandId, command.sessionId, CommandSubmissionPhase.ACCEPTED)
+            }
+            is moe.gensoukyo.agentpulse.protocol.NativeServerMessage.Error if message.recoverable -> {
+                pending.remove(requestId)
+                CommandSubmission(
+                    command.commandId,
+                    command.sessionId,
+                    CommandSubmissionPhase.FAILED,
+                    message.message,
+                )
+            }
+            else -> null
+        }
+    }
+
+    fun fail(requestId: String, message: String): CommandSubmission? {
+        val command = pending.remove(requestId) ?: return null
+        return CommandSubmission(command.commandId, command.sessionId, CommandSubmissionPhase.FAILED, message)
+    }
+
+    fun failAll(message: String): List<CommandSubmission> {
+        val submissions = pending.values.map {
+            CommandSubmission(it.commandId, it.sessionId, CommandSubmissionPhase.FAILED, message)
+        }
+        pending.clear()
+        return submissions
+    }
+}
+
+enum class CommandSubmissionPhase { SENDING, ACCEPTED, FAILED }
+
+data class CommandSubmission(
+    val commandId: String,
+    val sessionId: String,
+    val phase: CommandSubmissionPhase,
+    val error: String? = null,
+)
+
 data class ConnectionSnapshot(
     val host: HostProfile? = null,
     val connection: ConnectionPhase = ConnectionPhase.DISCONNECTED,
     val native: NativeState = NativeState(),
     val error: String? = null,
     val retrySeconds: Int? = null,
+    val commandSubmissions: Map<String, CommandSubmission> = emptyMap(),
 )
 
 enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RETRYING }
@@ -221,7 +319,17 @@ object ConnectionRuntime {
     private val mutable = MutableStateFlow(ConnectionSnapshot())
     private val cache = mutableMapOf<String, NativeState>()
     val state: StateFlow<ConnectionSnapshot> = mutable
-    internal fun update(value: ConnectionSnapshot) { mutable.value = value }
+    @Synchronized internal fun update(value: ConnectionSnapshot) { mutable.value = value }
+    @Synchronized internal fun recordCommand(value: CommandSubmission) {
+        mutable.value = mutable.value.copy(
+            commandSubmissions = mutable.value.commandSubmissions + (value.commandId to value),
+        )
+    }
+    @Synchronized fun consumeCommand(commandId: String) {
+        mutable.value = mutable.value.copy(
+            commandSubmissions = mutable.value.commandSubmissions - commandId,
+        )
+    }
     @Synchronized internal fun cached(hostId: String): NativeState = cache[hostId] ?: NativeState()
     @Synchronized internal fun remember(hostId: String, state: NativeState) { cache[hostId] = state }
     @Synchronized fun forget(hostId: String) { cache.remove(hostId) }

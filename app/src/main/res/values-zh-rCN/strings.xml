@@ -52,6 +52,9 @@
     <string name="updated">更新时间</string>
     <string name="message_placeholder">发送消息…</string>
     <string name="send">发送</string>
+    <string name="command_sending">正在等待 Host 确认…</string>
+    <string name="command_invalid">未知指令或缺少必要参数。</string>
+    <string name="command_waiting_for_connection">正在等待 Host 连接…</string>
     <string name="plan_on">启用 Plan 模式</string>
     <string name="plan_off">关闭 Plan 模式</string>
     <string name="workspace">工作区</string>

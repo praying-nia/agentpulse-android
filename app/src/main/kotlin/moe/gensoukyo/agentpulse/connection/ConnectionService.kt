@@ -86,10 +86,12 @@ class ConnectionService : LifecycleService() {
                     }
                 }
                 ConnectionRuntime.update(
-                    ConnectionSnapshot(
-                        profile,
-                        ConnectionPhase.CONNECTING,
-                        ConnectionRuntime.cached(hostId),
+                    ConnectionRuntime.state.value.copy(
+                        host = profile,
+                        connection = ConnectionPhase.CONNECTING,
+                        native = ConnectionRuntime.cached(hostId),
+                        error = null,
+                        retrySeconds = null,
                     ),
                 )
                 notifications.notify(ONGOING_ID, ongoingNotification(getString(R.string.connecting_to, profile.hostName)))
@@ -100,9 +102,18 @@ class ConnectionService : LifecycleService() {
                     onState = { native ->
                         ConnectionRuntime.remember(hostId, native)
                         val phase = if (native.phase == NativeState.Phase.LIVE) ConnectionPhase.CONNECTED else ConnectionPhase.CONNECTING
-                        ConnectionRuntime.update(ConnectionSnapshot(profile, phase, native))
+                        ConnectionRuntime.update(
+                            ConnectionRuntime.state.value.copy(
+                                host = profile,
+                                connection = phase,
+                                native = native,
+                                error = null,
+                                retrySeconds = null,
+                            ),
+                        )
                     },
                     onEventState = { before, after -> notifyImportantEvents(profile, before, after) },
+                    onCommandSubmission = ConnectionRuntime::recordCommand,
                 )
                 client = socket
                 socket.connect()
@@ -112,7 +123,7 @@ class ConnectionService : LifecycleService() {
                 val waitSeconds = delays[attempt.coerceAtMost(delays.lastIndex)]
                 attempt = (attempt + 1).coerceAtMost(delays.lastIndex)
                 ConnectionRuntime.update(
-                    ConnectionSnapshot(
+                    ConnectionRuntime.state.value.copy(
                         host = profile,
                         connection = ConnectionPhase.RETRYING,
                         native = ConnectionRuntime.cached(hostId),
@@ -182,12 +193,23 @@ class ConnectionService : LifecycleService() {
     }
 
     private fun submitCommand(intent: Intent) {
+        val requestId = intent.getStringExtra(EXTRA_COMMAND_REQUEST_ID) ?: return
+        val commandId = intent.getStringExtra(EXTRA_COMMAND_ID) ?: return
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: return
         val command = intent.getStringExtra(EXTRA_COMMAND_JSON)?.let {
             runCatching { moe.gensoukyo.agentpulse.protocol.DomainCodec.decode(it) }.getOrNull()
         } ?: return
-        val result = client?.submitCommand(command)
+        val result = client?.submitCommand(requestId, commandId, sessionId, command)
             ?: Result.failure(IllegalStateException(getString(R.string.connection_unavailable)))
         result.onFailure { error ->
+            ConnectionRuntime.recordCommand(
+                CommandSubmission(
+                    commandId,
+                    sessionId,
+                    CommandSubmissionPhase.FAILED,
+                    error.message ?: getString(R.string.connection_unavailable),
+                ),
+            )
             ConnectionRuntime.update(ConnectionRuntime.state.value.copy(error = error.message))
         }
     }
@@ -291,6 +313,8 @@ class ConnectionService : LifecycleService() {
         const val EXTRA_FORM_ANSWER_TYPES = "form_answer_types"
         const val EXTRA_FORM_ANSWER_VALUES = "form_answer_values"
         const val EXTRA_COMMAND_JSON = "command_json"
+        const val EXTRA_COMMAND_REQUEST_ID = "command_request_id"
+        const val EXTRA_COMMAND_ID = "command_id"
         private const val CONNECTION_CHANNEL = "agentpulse-connection"
         private const val EVENT_CHANNEL = "agentpulse-events"
         private const val ONGOING_ID = 101

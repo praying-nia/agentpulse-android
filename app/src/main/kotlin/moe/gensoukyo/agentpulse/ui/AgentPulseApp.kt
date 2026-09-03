@@ -237,6 +237,7 @@ fun AgentPulseApp(
                             onSubmitApproval = viewModel::submitApproval,
                             onSubmitForm = viewModel::submitForm,
                             onSubmitCommand = viewModel::submitCommand,
+                            onCommandConsumed = viewModel::consumeCommand,
                             onRetry = onConnect,
                             onDisconnect = viewModel::disconnect,
                             modifier = Modifier.fillMaxSize(),
@@ -516,7 +517,8 @@ private fun SessionsScreen(
     onSelect: (String?) -> Unit,
     onSubmitApproval: (String, String, String) -> Unit,
     onSubmitForm: (String, String, Map<String, FormAnswer>) -> Unit,
-    onSubmitCommand: (String, AgentCommandPayload) -> Unit,
+    onSubmitCommand: (String, AgentCommandPayload) -> String?,
+    onCommandConsumed: (String) -> Unit,
     onRetry: (HostProfile) -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
@@ -544,6 +546,7 @@ private fun SessionsScreen(
                     onSubmitApproval,
                     onSubmitForm,
                     onSubmitCommand,
+                    onCommandConsumed,
                     Modifier.fillMaxSize(),
                 )
             }
@@ -563,7 +566,15 @@ private fun SessionsScreen(
             if (selected == null) {
                 EmptySessionSelection(Modifier.weight(0.57f))
             } else {
-                SessionDetail(selected, connection, onSubmitApproval, onSubmitForm, onSubmitCommand, Modifier.weight(0.57f))
+                SessionDetail(
+                    selected,
+                    connection,
+                    onSubmitApproval,
+                    onSubmitForm,
+                    onSubmitCommand,
+                    onCommandConsumed,
+                    Modifier.weight(0.57f),
+                )
             }
         }
     }
@@ -715,7 +726,8 @@ private fun SessionDetail(
     connection: ConnectionSnapshot,
     onSubmitApproval: (String, String, String) -> Unit,
     onSubmitForm: (String, String, Map<String, FormAnswer>) -> Unit,
-    onSubmitCommand: (String, AgentCommandPayload) -> Unit,
+    onSubmitCommand: (String, AgentCommandPayload) -> String?,
+    onCommandConsumed: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val events = eventsNewestFirst(view.events)
@@ -752,6 +764,9 @@ private fun SessionDetail(
         CommandComposer(
             enabled = connection.native.phase == moe.gensoukyo.agentpulse.protocol.NativeState.Phase.LIVE,
             workspace = view.session.workspacePath,
+            connectionError = connection.error,
+            submissions = connection.commandSubmissions,
+            onCommandConsumed = onCommandConsumed,
         ) { command -> onSubmitCommand(view.session.id, command) }
     }
 }
@@ -800,9 +815,43 @@ private fun EventCard(event: EventRecord) {
 private fun CommandComposer(
     enabled: Boolean,
     workspace: String?,
-    onSubmit: (AgentCommandPayload) -> Unit,
+    connectionError: String?,
+    submissions: Map<String, moe.gensoukyo.agentpulse.connection.CommandSubmission>,
+    onCommandConsumed: (String) -> Unit,
+    onSubmit: (AgentCommandPayload) -> String?,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
+    var pendingCommandId by rememberSaveable { mutableStateOf<String?>(null) }
+    var submissionError by rememberSaveable { mutableStateOf<String?>(null) }
+    val submission = pendingCommandId?.let(submissions::get)
+    val unavailable = stringResource(R.string.connection_unavailable)
+    val invalid = stringResource(R.string.command_invalid)
+    LaunchedEffect(pendingCommandId, submission?.phase) {
+        val commandId = pendingCommandId ?: return@LaunchedEffect
+        when (submission?.phase) {
+            moe.gensoukyo.agentpulse.connection.CommandSubmissionPhase.ACCEPTED -> {
+                text = ""
+                pendingCommandId = null
+                submissionError = null
+                onCommandConsumed(commandId)
+            }
+            moe.gensoukyo.agentpulse.connection.CommandSubmissionPhase.FAILED -> {
+                pendingCommandId = null
+                submissionError = submission.error ?: unavailable
+                onCommandConsumed(commandId)
+            }
+            else -> Unit
+        }
+    }
+    fun submit(payload: AgentCommandPayload) {
+        val commandId = onSubmit(payload)
+        if (commandId == null) {
+            submissionError = connectionError ?: unavailable
+        } else {
+            pendingCommandId = commandId
+            submissionError = null
+        }
+    }
     val suggestions = if (text.startsWith("/") && !text.contains(' ')) {
         COMMON_COMMANDS.filter { it.startsWith(text) }
     } else emptyList()
@@ -817,27 +866,43 @@ private fun CommandComposer(
             }
             if (text.trim() == "/plan") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(false, { onSubmit(AgentCommandPayload.SetPlanMode(true)); text = "" }, label = { Text(stringResource(R.string.plan_on)) })
-                    FilterChip(false, { onSubmit(AgentCommandPayload.SetPlanMode(false)); text = "" }, label = { Text(stringResource(R.string.plan_off)) })
+                    FilterChip(false, { submit(AgentCommandPayload.SetPlanMode(true)) }, label = { Text(stringResource(R.string.plan_on)) })
+                    FilterChip(false, { submit(AgentCommandPayload.SetPlanMode(false)) }, label = { Text(stringResource(R.string.plan_off)) })
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { if (it.encodeToByteArray().size <= 64 * 1024) text = it },
-                    enabled = enabled,
+                    onValueChange = {
+                        if (it.encodeToByteArray().size <= 64 * 1024) {
+                            text = it
+                            submissionError = null
+                        }
+                    },
+                    enabled = enabled && pendingCommandId == null,
                     placeholder = { Text(stringResource(R.string.message_placeholder)) },
                     modifier = Modifier.weight(1f),
                     maxLines = 5,
-                )
-                IconButton(
-                    enabled = enabled && text.isNotBlank(),
-                    onClick = {
-                        parseComposerCommand(text, workspace)?.let(onSubmit)
-                        text = ""
+                    isError = submissionError != null,
+                    supportingText = when {
+                        pendingCommandId != null -> ({ Text(stringResource(R.string.command_sending)) })
+                        submissionError != null -> ({ Text(requireNotNull(submissionError)) })
+                        !enabled -> ({ Text(connectionError ?: stringResource(R.string.command_waiting_for_connection)) })
+                        else -> null
                     },
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.send))
+                )
+                if (pendingCommandId != null) {
+                    CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
+                } else {
+                    IconButton(
+                        enabled = enabled && text.isNotBlank(),
+                        onClick = {
+                            val command = parseComposerCommand(text, workspace)
+                            if (command == null) submissionError = invalid else submit(command)
+                        },
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.send))
+                    }
                 }
             }
         }

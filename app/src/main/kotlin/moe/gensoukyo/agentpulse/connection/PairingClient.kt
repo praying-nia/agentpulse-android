@@ -1,5 +1,6 @@
 package moe.gensoukyo.agentpulse.connection
 
+import android.util.Log
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -41,6 +42,7 @@ class PairingClient {
             .build()
         val socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(LOG_TAG, "Pairing WebSocket opened")
                 if (response.header("Sec-WebSocket-Protocol") != PAIRING_SUBPROTOCOL) {
                     result.completeExceptionally(IllegalStateException("Pairing subprotocol was not accepted"))
                     webSocket.close(1002, "subprotocol mismatch")
@@ -70,6 +72,7 @@ class PairingClient {
                 }
                 runCatching { PairingCodec.decodeServer(text) }
                     .onSuccess { message ->
+                        Log.d(LOG_TAG, "Received ${message.javaClass.simpleName}")
                         when (message) {
                             is PairingServerMessage.Pending -> {
                                 if (message.clientId != clientId) {
@@ -97,10 +100,16 @@ class PairingClient {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(LOG_TAG, "Pairing WebSocket failed (HTTP ${response?.code ?: "none"})", t)
                 result.completeExceptionally(t)
             }
 
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(LOG_TAG, "Pairing WebSocket closing with code $code")
+            }
+
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(LOG_TAG, "Pairing WebSocket closed with code $code")
                 if (!result.isCompleted) result.completeExceptionally(IllegalStateException("Pairing closed: $reason"))
             }
         })
@@ -114,6 +123,7 @@ class PairingClient {
     }
 
     private companion object {
+        const val LOG_TAG = "AgentPulsePairing"
         const val MAX_FRAME_BYTES = 16 * 1024
     }
 }

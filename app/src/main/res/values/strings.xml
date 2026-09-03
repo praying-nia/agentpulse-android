@@ -28,6 +28,8 @@
     <string name="retry">Retry</string>
     <string name="cancel">Cancel</string>
     <string name="pairing">Pairing…</string>
+    <string name="pairing_failed">Pairing failed</string>
+    <string name="pairing_failed_unknown">The connection ended without an error message. Scan a new QR code and try again.</string>
     <string name="waiting_for_host">Waiting for approval on the Host…</string>
     <string name="events">Events</string>
     <string name="workspace">Workspace</string>

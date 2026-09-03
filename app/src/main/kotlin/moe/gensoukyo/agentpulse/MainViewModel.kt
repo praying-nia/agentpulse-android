@@ -3,6 +3,7 @@ package moe.gensoukyo.agentpulse
 import android.app.Application
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -63,7 +64,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 connect(profile.hostId)
             }.onFailure { error ->
-                mutable.update { it.copy(pairing = PairingPhase.FAILED, pairingMessage = error.message) }
+                Log.e(PAIRING_LOG_TAG, "Pairing failed", error)
+                val message = error.message?.takeIf(String::isNotBlank)
+                    ?: getApplication<Application>().getString(R.string.pairing_failed_unknown)
+                mutable.update { it.copy(pairing = PairingPhase.FAILED, pairingMessage = message) }
             }
         }
     }
@@ -124,3 +128,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
+
+private const val PAIRING_LOG_TAG = "AgentPulsePairing"

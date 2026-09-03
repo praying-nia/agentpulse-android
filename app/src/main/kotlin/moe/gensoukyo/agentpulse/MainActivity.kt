@@ -488,7 +488,17 @@ private fun PairingDialog(phase: PairingPhase, message: String?, onDismiss: () -
     val terminal = phase == PairingPhase.SUCCEEDED || phase == PairingPhase.FAILED
     AlertDialog(
         onDismissRequest = { if (terminal) onDismiss() },
-        title = { Text(stringResource(if (phase == PairingPhase.WAITING_FOR_HOST) R.string.waiting_for_host else R.string.pairing)) },
+        title = {
+            Text(
+                stringResource(
+                    when (phase) {
+                        PairingPhase.WAITING_FOR_HOST -> R.string.waiting_for_host
+                        PairingPhase.FAILED -> R.string.pairing_failed
+                        else -> R.string.pairing
+                    },
+                ),
+            )
+        },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 if (!terminal) CircularProgressIndicator()

@@ -1,5 +1,6 @@
 package moe.gensoukyo.agentpulse.connection
 
+import android.util.Log
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
@@ -125,6 +126,7 @@ internal object RelayProtocol {
             }
             outer.soTimeout = CONTROL_TIMEOUT_MILLIS
             outer.startHandshake()
+            Log.d(LOG_TAG, "Relay TLS handshake completed")
             val input = DataInputStream(outer.inputStream)
             val output = DataOutputStream(outer.outputStream)
             val challenge = readMessage(input)
@@ -145,6 +147,7 @@ internal object RelayProtocol {
                 "tunnel_ready" -> {
                     response.requireKeys("type", "peer_connection_id")
                     requireUuidV7(response.string("peer_connection_id"), "peer_connection_id")
+                    Log.d(LOG_TAG, "Relay tunnel is ready")
                 }
                 "error" -> {
                     response.requireKeys("type", "code", "message", "recoverable")
@@ -154,6 +157,7 @@ internal object RelayProtocol {
             }
             return outer
         } catch (error: Exception) {
+            Log.e(LOG_TAG, "Relay tunnel failed", error)
             runCatching { tcp.close() }
             if (error is IOException) throw error
             throw IOException("Relay handshake failed: ${error.message}", error)
@@ -220,6 +224,7 @@ internal object RelayProtocol {
         Base64.getUrlDecoder().decode(value)
 
     private const val RELAY_VERSION = 1
+    private const val LOG_TAG = "AgentPulseRelay"
     private const val MAX_CONTROL_BYTES = 16 * 1024
     private const val CONNECT_TIMEOUT_MILLIS = 5_000
     private const val CONTROL_TIMEOUT_MILLIS = 10_000

@@ -1,7 +1,14 @@
 <resources>
     <string name="app_name">AgentPulse</string>
     <string name="scan_qr">扫描二维码</string>
+    <string name="connections">连接</string>
+    <string name="settings">设置</string>
+    <string name="back_to_sessions">返回会话列表</string>
+    <string name="my_connections">我的连接</string>
+    <string name="recent_sessions">最近会话</string>
     <string name="no_hosts">还没有已配对的电脑</string>
+    <string name="no_hosts_hint">扫描电脑端 AgentPulse 显示的二维码即可开始使用。</string>
+    <string name="start_scanning">开始扫描</string>
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
     <string name="forget">忘记</string>
@@ -16,6 +23,13 @@
     <string name="sessions">会话</string>
     <string name="no_sessions">没有已配置的会话</string>
     <string name="select_session">选择会话以查看时间线</string>
+    <string name="search_sessions">搜索会话</string>
+    <string name="no_matching_sessions">没有符合条件的会话</string>
+    <string name="no_active_connection">当前没有活动连接</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_running">运行中</string>
+    <string name="filter_waiting">等待中</string>
+    <string name="filter_finished">已结束</string>
     <string name="connection_channel">AgentPulse 连接</string>
     <string name="connection_channel_description">保持与所选电脑的连接</string>
     <string name="connecting_to">正在连接 %1$s</string>
@@ -32,6 +46,13 @@
     <string name="pairing_failed_unknown">连接结束但没有提供错误信息，请扫描新的二维码后重试。</string>
     <string name="waiting_for_host">正在等待电脑端确认…</string>
     <string name="events">事件</string>
+    <string name="latest_events">最新事件</string>
+    <string name="no_events">这个会话还没有收到事件。</string>
+    <string name="action_required">需要处理</string>
+    <string name="updated">更新时间</string>
+    <string name="message_placeholder">发送消息…</string>
+    <string name="send_unavailable">暂不支持发送</string>
+    <string name="composer_unavailable">当前版本仅支持查看与审批，暂不支持发送消息。</string>
     <string name="workspace">工作区</string>
     <string name="provider">Provider</string>
     <string name="status">状态</string>
@@ -41,7 +62,6 @@
     <string name="connecting">正在连接</string>
     <string name="connected">已连接</string>
     <string name="retrying">正在重试</string>
-    <string name="cursor">游标 %1$s</string>
     <string name="state_initializing">正在初始化</string>
     <string name="state_idle">空闲</string>
     <string name="state_running">运行中</string>
@@ -77,4 +97,26 @@
     <string name="approval_confirm">将这个决定发送给 Codex？</string>
     <string name="approval_submit_failed">无法提交审批结果。</string>
     <string name="connection_unavailable">Host 连接当前不可用。</string>
+    <string name="appearance">外观</string>
+    <string name="theme_mode">主题模式</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="color_style">配色方案</string>
+    <string name="color_dynamic">系统动态色</string>
+    <string name="color_indigo">AgentPulse 靛蓝</string>
+    <string name="color_violet">紫色</string>
+    <string name="color_teal">青绿</string>
+    <string name="color_orange">橙色</string>
+    <string name="color_rose">玫红</string>
+    <string name="custom_color">自定义颜色</string>
+    <string name="custom_color_hint">输入一个主色，AgentPulse 会自动生成对应的浅色与深色色阶。</string>
+    <string name="invalid_hex_color">请输入有效的六位 HEX 颜色。</string>
+    <string name="connection_settings">连接设置</string>
+    <string name="general">通用</string>
+    <string name="notification_settings">通知设置</string>
+    <string name="about">关于</string>
+    <string name="version">版本</string>
+    <string name="forget_host_title">忘记 %1$s？</string>
+    <string name="forget_host_warning">这会删除本地凭据；再次连接需要重新扫描二维码。</string>
 </resources>

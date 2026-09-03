@@ -1,7 +1,14 @@
 <resources>
     <string name="app_name">AgentPulse</string>
     <string name="scan_qr">Scan QR code</string>
+    <string name="connections">Connections</string>
+    <string name="settings">Settings</string>
+    <string name="back_to_sessions">Back to sessions</string>
+    <string name="my_connections">My connections</string>
+    <string name="recent_sessions">Recent sessions</string>
     <string name="no_hosts">No paired computers yet</string>
+    <string name="no_hosts_hint">Scan the QR code shown by AgentPulse on your computer to get started.</string>
+    <string name="start_scanning">Start scanning</string>
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
     <string name="forget">Forget</string>
@@ -16,6 +23,13 @@
     <string name="sessions">Sessions</string>
     <string name="no_sessions">No configured sessions</string>
     <string name="select_session">Select a session to view its timeline</string>
+    <string name="search_sessions">Search sessions</string>
+    <string name="no_matching_sessions">No sessions match this search</string>
+    <string name="no_active_connection">No active connection</string>
+    <string name="filter_all">All</string>
+    <string name="filter_running">Running</string>
+    <string name="filter_waiting">Waiting</string>
+    <string name="filter_finished">Finished</string>
     <string name="connection_channel">AgentPulse connection</string>
     <string name="connection_channel_description">Keeps the selected computer connected</string>
     <string name="connecting_to">Connecting to %1$s</string>
@@ -32,6 +46,13 @@
     <string name="pairing_failed_unknown">The connection ended without an error message. Scan a new QR code and try again.</string>
     <string name="waiting_for_host">Waiting for approval on the Host…</string>
     <string name="events">Events</string>
+    <string name="latest_events">Latest events</string>
+    <string name="no_events">No events have arrived for this session.</string>
+    <string name="action_required">Action required</string>
+    <string name="updated">Updated</string>
+    <string name="message_placeholder">Send a message…</string>
+    <string name="send_unavailable">Sending is not available</string>
+    <string name="composer_unavailable">This version supports viewing and approvals only. Sending messages is not available yet.</string>
     <string name="workspace">Workspace</string>
     <string name="provider">Provider</string>
     <string name="status">Status</string>
@@ -41,7 +62,6 @@
     <string name="connecting">Connecting</string>
     <string name="connected">Connected</string>
     <string name="retrying">Retrying</string>
-    <string name="cursor">Cursor %1$s</string>
     <string name="state_initializing">Initializing</string>
     <string name="state_idle">Idle</string>
     <string name="state_running">Running</string>
@@ -78,4 +98,26 @@
     <string name="approval_confirm">Send this decision to Codex?</string>
     <string name="approval_submit_failed">Could not submit the approval response.</string>
     <string name="connection_unavailable">The Host connection is unavailable.</string>
+    <string name="appearance">Appearance</string>
+    <string name="theme_mode">Theme mode</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="color_style">Color style</string>
+    <string name="color_dynamic">System dynamic</string>
+    <string name="color_indigo">AgentPulse indigo</string>
+    <string name="color_violet">Violet</string>
+    <string name="color_teal">Teal</string>
+    <string name="color_orange">Orange</string>
+    <string name="color_rose">Rose</string>
+    <string name="custom_color">Custom color</string>
+    <string name="custom_color_hint">Enter a primary color. AgentPulse will derive the remaining light and dark theme colors.</string>
+    <string name="invalid_hex_color">Enter a valid six-digit HEX color.</string>
+    <string name="connection_settings">Connection settings</string>
+    <string name="general">General</string>
+    <string name="notification_settings">Notification settings</string>
+    <string name="about">About</string>
+    <string name="version">Version</string>
+    <string name="forget_host_title">Forget %1$s?</string>
+    <string name="forget_host_warning">This removes the local credential. Reconnecting will require scanning a new QR code.</string>
 </resources>

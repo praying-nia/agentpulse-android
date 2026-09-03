@@ -8,8 +8,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import moe.gensoukyo.agentpulse.connection.ConnectionRuntime
@@ -18,6 +20,10 @@ import moe.gensoukyo.agentpulse.connection.PairingClient
 import moe.gensoukyo.agentpulse.data.CredentialVault
 import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
+import moe.gensoukyo.agentpulse.data.ColorSource
+import moe.gensoukyo.agentpulse.data.ThemeMode
+import moe.gensoukyo.agentpulse.data.UiPreferences
+import moe.gensoukyo.agentpulse.data.UiPreferencesRepository
 import moe.gensoukyo.agentpulse.protocol.PairingCodec
 
 data class AppState(
@@ -32,9 +38,15 @@ enum class PairingPhase { IDLE, CONNECTING, WAITING_FOR_HOST, SUCCEEDED, FAILED 
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = CredentialVault(application)
+    private val uiPreferencesRepository = UiPreferencesRepository(application)
     private val mutable = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutable.asStateFlow()
     val connection = ConnectionRuntime.state
+    val uiPreferences: StateFlow<UiPreferences> = uiPreferencesRepository.preferences.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        UiPreferences(),
+    )
 
     init {
         refresh()
@@ -130,6 +142,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectSession(sessionId: String?) = mutable.update { it.copy(selectedSessionId = sessionId) }
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { uiPreferencesRepository.setThemeMode(mode) }
+    }
+
+    fun setColorSource(source: ColorSource) {
+        viewModelScope.launch { uiPreferencesRepository.setColorSource(source) }
+    }
+
+    fun setCustomSeed(argb: Int) {
+        viewModelScope.launch { uiPreferencesRepository.setCustomSeed(argb) }
+    }
 
     private fun refresh() {
         viewModelScope.launch {

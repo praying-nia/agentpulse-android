@@ -72,6 +72,7 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -88,6 +89,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -123,11 +126,14 @@ import moe.gensoukyo.agentpulse.data.formatHexColor
 import moe.gensoukyo.agentpulse.data.parseHexColor
 import moe.gensoukyo.agentpulse.pairing.QrScanner
 import moe.gensoukyo.agentpulse.protocol.ApprovalPrompt
+import moe.gensoukyo.agentpulse.protocol.AgentCommandPayload
 import moe.gensoukyo.agentpulse.protocol.ApprovalSubject
 import moe.gensoukyo.agentpulse.protocol.ApprovalSubmissionState
 import moe.gensoukyo.agentpulse.protocol.EventImportance
 import moe.gensoukyo.agentpulse.protocol.EventRecord
 import moe.gensoukyo.agentpulse.protocol.SessionView
+import moe.gensoukyo.agentpulse.protocol.FormAnswer
+import moe.gensoukyo.agentpulse.protocol.FormPrompt
 import moe.gensoukyo.agentpulse.ui.theme.semanticColors
 
 private enum class Destination(val label: Int) {
@@ -159,7 +165,6 @@ fun AgentPulseApp(
     var settingsHostId by rememberSaveable { mutableStateOf<String?>(null) }
     val destination = Destination.valueOf(destinationName)
     val selected = app.selectedSessionId?.let(connection.native.sessions::get)
-    val readOnlyMessage = stringResource(R.string.composer_unavailable)
 
     LaunchedEffect(transientError) {
         transientError?.let { snackbar.showSnackbar(it) }
@@ -230,11 +235,10 @@ fun AgentPulseApp(
                             expanded = expanded,
                             onSelect = viewModel::selectSession,
                             onSubmitApproval = viewModel::submitApproval,
+                            onSubmitForm = viewModel::submitForm,
+                            onSubmitCommand = viewModel::submitCommand,
                             onRetry = onConnect,
                             onDisconnect = viewModel::disconnect,
-                            onComposerClick = {
-                                snackbar.showSnackbar(message = readOnlyMessage)
-                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                         Destination.SETTINGS -> SettingsScreen(
@@ -511,9 +515,10 @@ private fun SessionsScreen(
     expanded: Boolean,
     onSelect: (String?) -> Unit,
     onSubmitApproval: (String, String, String) -> Unit,
+    onSubmitForm: (String, String, Map<String, FormAnswer>) -> Unit,
+    onSubmitCommand: (String, AgentCommandPayload) -> Unit,
     onRetry: (HostProfile) -> Unit,
     onDisconnect: () -> Unit,
-    onComposerClick: suspend () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (!expanded) {
@@ -537,7 +542,8 @@ private fun SessionsScreen(
                     visibleSession,
                     connection,
                     onSubmitApproval,
-                    onComposerClick,
+                    onSubmitForm,
+                    onSubmitCommand,
                     Modifier.fillMaxSize(),
                 )
             }
@@ -557,7 +563,7 @@ private fun SessionsScreen(
             if (selected == null) {
                 EmptySessionSelection(Modifier.weight(0.57f))
             } else {
-                SessionDetail(selected, connection, onSubmitApproval, onComposerClick, Modifier.weight(0.57f))
+                SessionDetail(selected, connection, onSubmitApproval, onSubmitForm, onSubmitCommand, Modifier.weight(0.57f))
             }
         }
     }
@@ -681,9 +687,10 @@ private fun SessionCard(view: SessionView, onClick: () -> Unit) {
                 Text(view.session.workspaceName ?: view.session.workspacePath ?: "—", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), maxLines = 1)
                 Text(formatTimestamp(view.session.updatedAt), style = MaterialTheme.typography.labelSmall)
             }
-            if (view.pendingApprovals.isNotEmpty()) {
+            val pendingCount = view.pendingApprovals.size + view.pendingForms.size
+            if (pendingCount > 0) {
                 Text(
-                    pluralStringResource(R.plurals.pending_approvals, view.pendingApprovals.size, view.pendingApprovals.size),
+                    pluralStringResource(R.plurals.pending_approvals, pendingCount, pendingCount),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.labelMedium,
                 )
@@ -707,11 +714,13 @@ private fun SessionDetail(
     view: SessionView,
     connection: ConnectionSnapshot,
     onSubmitApproval: (String, String, String) -> Unit,
-    onComposerClick: suspend () -> Unit,
+    onSubmitForm: (String, String, Map<String, FormAnswer>) -> Unit,
+    onSubmitCommand: (String, AgentCommandPayload) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val events = eventsNewestFirst(view.events)
     val approvals = view.pendingApprovals.values.sortedByDescending(ApprovalPrompt::requestedAt)
+    val forms = view.pendingForms.values.sortedByDescending(FormPrompt::requestedAt)
     Column(modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.weight(1f),
@@ -719,8 +728,11 @@ private fun SessionDetail(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item { SessionSummary(view, connection) }
-            if (approvals.isNotEmpty()) {
+            if (approvals.isNotEmpty() || forms.isNotEmpty()) {
                 item { SectionTitle(stringResource(R.string.action_required)) }
+                items(forms, key = FormPrompt::id) { form ->
+                    FormCard(form) { answers -> onSubmitForm(view.session.id, form.id, answers) }
+                }
                 items(approvals, key = ApprovalPrompt::id) { approval ->
                     ApprovalCard(approval) { optionId -> onSubmitApproval(view.session.id, approval.id, optionId) }
                 }
@@ -737,7 +749,10 @@ private fun SessionDetail(
                 }
             }
         }
-        ReadOnlyComposer(onComposerClick)
+        CommandComposer(
+            enabled = connection.native.phase == moe.gensoukyo.agentpulse.protocol.NativeState.Phase.LIVE,
+            workspace = view.session.workspacePath,
+        ) { command -> onSubmitCommand(view.session.id, command) }
     }
 }
 
@@ -782,29 +797,82 @@ private fun EventCard(event: EventRecord) {
 }
 
 @Composable
-private fun ReadOnlyComposer(onClick: suspend () -> Unit) {
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+private fun CommandComposer(
+    enabled: Boolean,
+    workspace: String?,
+    onSubmit: (AgentCommandPayload) -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val suggestions = if (text.startsWith("/") && !text.contains(' ')) {
+        COMMON_COMMANDS.filter { it.startsWith(text) }
+    } else emptyList()
     Surface(tonalElevation = 2.dp) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Surface(
-                modifier = Modifier.weight(1f).clickable { scope.launch { onClick() } },
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Text(
-                    stringResource(R.string.message_placeholder),
-                    Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (suggestions.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    suggestions.forEach { command ->
+                        AssistChip(onClick = { text = "$command " }, label = { Text(command) })
+                    }
+                }
             }
-            IconButton(onClick = { scope.launch { onClick() } }) {
-                Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.send_unavailable), tint = MaterialTheme.colorScheme.primary)
+            if (text.trim() == "/plan") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(false, { onSubmit(AgentCommandPayload.SetPlanMode(true)); text = "" }, label = { Text(stringResource(R.string.plan_on)) })
+                    FilterChip(false, { onSubmit(AgentCommandPayload.SetPlanMode(false)); text = "" }, label = { Text(stringResource(R.string.plan_off)) })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { if (it.encodeToByteArray().size <= 64 * 1024) text = it },
+                    enabled = enabled,
+                    placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 5,
+                )
+                IconButton(
+                    enabled = enabled && text.isNotBlank(),
+                    onClick = {
+                        parseComposerCommand(text, workspace)?.let(onSubmit)
+                        text = ""
+                    },
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.send))
+                }
             }
         }
+    }
+}
+
+private val COMMON_COMMANDS = listOf(
+    "/model", "/resume", "/clear", "/plan", "/compact", "/review", "/rename", "/fork", "/status", "/permissions", "/stop", "/queue",
+)
+
+internal fun parseComposerCommand(value: String, workspace: String?): AgentCommandPayload? {
+    val text = value.trim()
+    if (text.isEmpty()) return null
+    if (!text.startsWith('/')) return AgentCommandPayload.SubmitPrompt(text)
+    val command = text.substringBefore(' ').lowercase(Locale.ROOT)
+    val argument = text.substringAfter(' ', "").trim().ifEmpty { null }
+    return when (command) {
+        "/model" -> argument?.split(Regex("\\s+"), limit = 2)?.let { AgentCommandPayload.SelectModel(it[0], it.getOrNull(1)) } ?: AgentCommandPayload.ListModels
+        "/resume" -> when {
+            argument == null -> AgentCommandPayload.ListThreads()
+            argument.startsWith("--cursor ") -> AgentCommandPayload.ListThreads(argument.removePrefix("--cursor ").trim())
+            else -> AgentCommandPayload.ResumeThread(argument)
+        }
+        "/clear", "/new" -> workspace?.let(AgentCommandPayload::StartThread)
+        "/plan" -> AgentCommandPayload.SetPlanMode(argument?.lowercase(Locale.ROOT) != "off")
+        "/compact" -> AgentCommandPayload.Compact
+        "/review" -> AgentCommandPayload.Review(argument)
+        "/rename" -> argument?.let(AgentCommandPayload::Rename)
+        "/fork" -> AgentCommandPayload.Fork
+        "/status" -> AgentCommandPayload.Status
+        "/permissions" -> argument?.let(AgentCommandPayload::SelectPermissionProfile) ?: AgentCommandPayload.ListPermissionProfiles
+        "/stop" -> AgentCommandPayload.Cancel
+        "/queue" -> argument?.lowercase(Locale.ROOT)?.takeIf { it in setOf("pause", "resume", "clear") }?.let(AgentCommandPayload::Queue)
+        "/steer" -> argument?.let { AgentCommandPayload.SubmitPrompt(it, steer = true) }
+        else -> null
     }
 }
 
@@ -1041,6 +1109,79 @@ private fun RelaySettingsDialog(host: HostProfile, onDismiss: () -> Unit, onSave
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+@Composable
+private fun FormCard(form: FormPrompt, onSubmit: (Map<String, FormAnswer>) -> Unit) {
+    var answers by remember(form.id) { mutableStateOf<Map<String, FormAnswer>>(emptyMap()) }
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(form.prompt, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(formatTimestamp(form.requestedAt), style = MaterialTheme.typography.labelSmall)
+            }
+            form.fields.forEach { field ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(field.header, style = MaterialTheme.typography.labelLarge)
+                    Text(field.prompt, style = MaterialTheme.typography.bodyMedium)
+                    field.options.forEach { option ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = form.interactive) {
+                                answers = answers + (field.id to FormAnswer.Choice(option.id))
+                            },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = (answers[field.id] as? FormAnswer.Choice)?.optionId == option.id,
+                                onClick = if (form.interactive) {
+                                    {
+                                    answers = answers + (field.id to FormAnswer.Choice(option.id))
+                                    }
+                                } else null,
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(option.label)
+                                option.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
+                    }
+                    if (field.allowsOther) {
+                        val currentText = (answers[field.id] as? FormAnswer.Text)?.text.orEmpty()
+                        OutlinedTextField(
+                            value = currentText,
+                            onValueChange = { answers = answers + (field.id to FormAnswer.Text(it)) },
+                            enabled = form.interactive,
+                            singleLine = !field.options.isEmpty(),
+                            visualTransformation = if (field.sensitive) PasswordVisualTransformation() else VisualTransformation.None,
+                            label = { Text(if (field.options.isEmpty()) stringResource(R.string.form_answer) else stringResource(R.string.form_other)) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+            form.submissionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (form.submissionState == ApprovalSubmissionState.SUBMITTING) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(stringResource(R.string.form_submitting))
+                }
+            } else if (form.interactive) {
+                Button(
+                    onClick = { onSubmit(answers) },
+                    enabled = form.fields.all { field ->
+                        when (val answer = answers[field.id]) {
+                            is FormAnswer.Choice -> field.options.any { it.id == answer.optionId }
+                            is FormAnswer.Text -> field.allowsOther && answer.text.isNotBlank()
+                            null -> false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(stringResource(R.string.form_submit)) }
+            } else {
+                Text(stringResource(R.string.form_read_only), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }
 
 @Composable

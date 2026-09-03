@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -88,8 +89,19 @@ object DomainCodec {
 
     fun approvalRequest(message: DomainEnvelope): ApprovalPrompt {
         if (message.type != "interaction_request") throw ProtocolException("expected interaction_request")
-        return interactionRequest(message.payload)
+        return interactionRequest(message.payload).approval
             ?: throw ProtocolException("interaction request is not an approval")
+    }
+
+    fun formRequest(message: DomainEnvelope): FormPrompt {
+        if (message.type != "interaction_request") throw ProtocolException("expected interaction_request")
+        return interactionRequest(message.payload).form
+            ?: throw ProtocolException("interaction request is not a form")
+    }
+
+    fun interactionType(message: DomainEnvelope): String {
+        if (message.type != "interaction_request") throw ProtocolException("expected interaction_request")
+        return message.payload.objectField("payload").string("type")
     }
 
     fun approvalResponse(
@@ -112,6 +124,82 @@ object DomainCodec {
         },
     ).also(::validate)
 
+    fun formResponse(
+        requestId: String,
+        sessionId: String,
+        channelId: String,
+        answers: Map<String, FormAnswer>,
+        respondedAt: Instant = Instant.now(),
+    ): DomainEnvelope = DomainEnvelope(
+        type = "interaction_response",
+        payload = buildJsonObject {
+            put("request_id", UuidV7.require(requestId, "response.request_id"))
+            put("session_id", UuidV7.require(sessionId, "response.session_id"))
+            put("channel_id", UuidV7.require(channelId, "response.channel_id"))
+            put("responded_at", respondedAt.toString())
+            put("payload", buildJsonObject {
+                put("type", "form")
+                put("answers", buildJsonArray {
+                    answers.forEach { (fieldId, answer) ->
+                        add(buildJsonObject {
+                            put("field_id", UuidV7.require(fieldId, "form.field_id"))
+                            put("value", buildJsonObject {
+                                when (answer) {
+                                    is FormAnswer.Choice -> {
+                                        put("type", "choice")
+                                        put("option_id", UuidV7.require(answer.optionId, "form.option_id"))
+                                    }
+                                    is FormAnswer.Text -> {
+                                        put("type", "text")
+                                        put("text", answer.text.requireNotBlank("form.text"))
+                                    }
+                                }
+                            })
+                        })
+                    }
+                })
+            })
+        },
+    ).also(::validate)
+
+    fun command(
+        commandId: String,
+        sessionId: String,
+        channelId: String,
+        command: AgentCommandPayload,
+        issuedAt: Instant = Instant.now(),
+    ): DomainEnvelope = DomainEnvelope(
+        type = "agent_command",
+        payload = buildJsonObject {
+            put("id", UuidV7.require(commandId, "command.id"))
+            put("session_id", UuidV7.require(sessionId, "command.session_id"))
+            put("channel_id", UuidV7.require(channelId, "command.channel_id"))
+            put("issued_at", issuedAt.toString())
+            put("payload", buildJsonObject {
+                when (command) {
+                    is AgentCommandPayload.SubmitPrompt -> {
+                        put("type", "submit_prompt"); put("text", command.text.requireNotBlank("prompt")); put("delivery", if (command.steer) "steer" else "queue")
+                    }
+                    AgentCommandPayload.Cancel -> put("type", "cancel_session")
+                    AgentCommandPayload.ListModels -> put("type", "list_models")
+                    is AgentCommandPayload.SelectModel -> { put("type", "select_model"); put("model", command.model.requireNotBlank("model")); command.effort?.let { put("effort", it.requireNotBlank("effort")) } }
+                    is AgentCommandPayload.SetPlanMode -> { put("type", "set_plan_mode"); put("enabled", command.enabled) }
+                    is AgentCommandPayload.ListThreads -> { put("type", "list_threads"); command.cursor?.let { put("cursor", it.requireNotBlank("cursor")) } }
+                    is AgentCommandPayload.ResumeThread -> { put("type", "resume_thread"); put("thread_id", command.threadId.requireNotBlank("thread_id")) }
+                    is AgentCommandPayload.StartThread -> { put("type", "start_thread"); put("cwd", command.cwd.requireNotBlank("cwd")) }
+                    AgentCommandPayload.Compact -> put("type", "compact")
+                    is AgentCommandPayload.Review -> { put("type", "review"); command.instructions?.let { put("instructions", it.requireNotBlank("instructions")) } }
+                    is AgentCommandPayload.Rename -> { put("type", "rename"); put("name", command.name.requireNotBlank("name")) }
+                    AgentCommandPayload.Fork -> put("type", "fork")
+                    AgentCommandPayload.Status -> put("type", "status")
+                    AgentCommandPayload.ListPermissionProfiles -> put("type", "list_permission_profiles")
+                    is AgentCommandPayload.SelectPermissionProfile -> { put("type", "select_permission_profile"); put("profile", command.profile.requireNotBlank("profile")) }
+                    is AgentCommandPayload.Queue -> { put("type", "queue"); put("action", command.action) }
+                }
+            })
+        },
+    ).also(::validate)
+
     fun event(message: DomainEnvelope): EventRecord {
         if (message.type != "agent_event") throw ProtocolException("expected agent_event")
         val payload = message.payload
@@ -119,11 +207,9 @@ object DomainCodec {
         val type = eventPayload.string("type")
         val sessionId = payload.string("session_id")
         val presentation = eventPresentation(type, eventPayload)
-        val approval = if (type == "interaction_requested") {
+        val interaction = if (type == "interaction_requested") {
             interactionRequest(eventPayload.objectField("request"))
-        } else {
-            null
-        }
+        } else null
         val embeddedSessionId = when (type) {
             "session_started" -> eventPayload.objectField("session").string("id")
             "interaction_requested" -> eventPayload.objectField("request").string("session_id")
@@ -149,7 +235,9 @@ object DomainCodec {
             title = presentation.first,
             detail = presentation.second,
             importance = presentation.third,
-            approval = approval,
+            messageRole = if (type == "message") eventPayload.objectField("message").string("role") else null,
+            approval = interaction?.approval,
+            form = interaction?.form,
             terminalInteractionId = terminalInteractionId,
             raw = message,
         )
@@ -264,7 +352,10 @@ object DomainCodec {
     }
 
     private fun message(value: JsonObject) {
-        value.exact(setOf("level", "content")); value.enum("level", MESSAGE_LEVELS); value.nonblank("content")
+        value.exact(setOf("role", "level", "content"))
+        value.enum("role", MESSAGE_ROLES)
+        value.enum("level", MESSAGE_LEVELS)
+        value.nonblank("content")
     }
 
     private fun tool(value: JsonObject) {
@@ -311,7 +402,12 @@ object DomainCodec {
         }
     }
 
-    private fun interactionRequest(value: JsonObject): ApprovalPrompt? {
+    private data class DecodedInteraction(
+        val approval: ApprovalPrompt? = null,
+        val form: FormPrompt? = null,
+    )
+
+    private fun interactionRequest(value: JsonObject): DecodedInteraction {
         value.exact(setOf("id", "session_id", "requested_at", "prompt", "payload"), setOf("expires_at"))
         UuidV7.require(value.string("id"), "interaction.id")
         UuidV7.require(value.string("session_id"), "interaction.session_id")
@@ -345,7 +441,7 @@ object DomainCodec {
                 if ((unavailable == null) == options.isEmpty()) {
                     throw ProtocolException("approval must be either actionable or explicitly unavailable")
                 }
-                return ApprovalPrompt(
+                return DecodedInteraction(approval = ApprovalPrompt(
                     id = value.string("id"),
                     sessionId = value.string("session_id"),
                     requestedAt = value.string("requested_at"),
@@ -353,7 +449,7 @@ object DomainCodec {
                     subject = subject,
                     options = options,
                     unavailableReason = unavailable,
-                )
+                ))
             }
             "choice" -> {
                 payload.exact(setOf("type", "options", "multiple")); payload.boolean("multiple")
@@ -372,9 +468,52 @@ object DomainCodec {
                 payload.exact(setOf("type", "multiline"), setOf("placeholder")); payload.boolean("multiline")
                 payload.optionalString("placeholder")?.requireNotBlank("text.placeholder")
             }
+            "form" -> {
+                payload.exact(setOf("type", "fields", "blocking"))
+                val fieldIds = mutableSetOf<String>()
+                val fields = payload.array("fields").map { element ->
+                    val field = element.objectValue("form field")
+                    field.exact(setOf("id", "header", "prompt", "options", "allows_other", "sensitive"))
+                    val fieldId = UuidV7.require(field.string("id"), "form.field.id")
+                    if (!fieldIds.add(fieldId)) throw ProtocolException("duplicate form field")
+                    val optionIds = mutableSetOf<String>()
+                    val options = field.array("options").map { optionElement ->
+                        val option = optionElement.objectValue("form option")
+                        option.exact(setOf("id", "label"), setOf("description"))
+                        val optionId = UuidV7.require(option.string("id"), "form.option.id")
+                        if (!optionIds.add(optionId)) throw ProtocolException("duplicate form option")
+                        FormOption(
+                            optionId,
+                            option.nonblank("label"),
+                            option.optionalString("description")?.requireNotBlank("form.option.description"),
+                        )
+                    }
+                    val allowsOther = field.boolean("allows_other")
+                    if (options.isEmpty() && !allowsOther) {
+                        throw ProtocolException("text form field must allow a custom answer")
+                    }
+                    FormField(
+                        id = fieldId,
+                        header = field.nonblank("header"),
+                        prompt = field.nonblank("prompt"),
+                        options = options,
+                        allowsOther = allowsOther,
+                        sensitive = field.boolean("sensitive"),
+                    )
+                }
+                if (fields.isEmpty()) throw ProtocolException("form fields must not be empty")
+                return DecodedInteraction(form = FormPrompt(
+                    id = value.string("id"),
+                    sessionId = value.string("session_id"),
+                    requestedAt = value.string("requested_at"),
+                    prompt = value.string("prompt"),
+                    fields = fields,
+                    blocking = payload.boolean("blocking"),
+                ))
+            }
             else -> throw ProtocolException("unknown interaction request")
         }
-        return null
+        return DecodedInteraction()
     }
 
     private fun approvalSubject(value: JsonObject): ApprovalSubject = when (value.string("type")) {
@@ -431,6 +570,30 @@ object DomainCodec {
             "text" -> {
                 payload.exact(setOf("type", "text")); payload.string("text")
             }
+            "form" -> {
+                payload.exact(setOf("type", "answers"))
+                val fieldIds = mutableSetOf<String>()
+                val answers = payload.array("answers")
+                if (answers.isEmpty()) throw ProtocolException("form answers must not be empty")
+                answers.forEach { element ->
+                    val answer = element.objectValue("form answer")
+                    answer.exact(setOf("field_id", "value"))
+                    val fieldId = UuidV7.require(answer.string("field_id"), "form.field_id")
+                    if (!fieldIds.add(fieldId)) throw ProtocolException("duplicate form answer")
+                    val answerValue = answer.objectField("value")
+                    when (answerValue.string("type")) {
+                        "choice" -> {
+                            answerValue.exact(setOf("type", "option_id"))
+                            UuidV7.require(answerValue.string("option_id"), "form.option_id")
+                        }
+                        "text" -> {
+                            answerValue.exact(setOf("type", "text"))
+                            answerValue.nonblank("text")
+                        }
+                        else -> throw ProtocolException("unknown form answer")
+                    }
+                }
+            }
             else -> throw ProtocolException("unknown interaction response")
         }
     }
@@ -451,11 +614,21 @@ object DomainCodec {
         val payload = value.objectField("payload")
         when (payload.string("type")) {
             "submit_prompt" -> {
-                payload.exact(setOf("type", "text")); payload.nonblank("text")
+                payload.exact(setOf("type", "text", "delivery")); payload.nonblank("text"); payload.enum("delivery", setOf("queue", "steer"))
             }
             "cancel_session" -> {
                 payload.exact(setOf("type"), setOf("reason")); payload.optionalString("reason")?.requireNotBlank("cancel.reason")
             }
+            "list_models", "compact", "fork", "status", "list_permission_profiles" -> payload.exact(setOf("type"))
+            "select_model" -> { payload.exact(setOf("type", "model"), setOf("effort")); payload.nonblank("model"); payload.optionalString("effort")?.requireNotBlank("effort") }
+            "set_plan_mode" -> { payload.exact(setOf("type", "enabled")); payload.boolean("enabled") }
+            "list_threads" -> { payload.exact(setOf("type"), setOf("cursor")); payload.optionalString("cursor")?.requireNotBlank("cursor") }
+            "resume_thread" -> { payload.exact(setOf("type", "thread_id")); payload.nonblank("thread_id") }
+            "start_thread" -> { payload.exact(setOf("type", "cwd")); payload.nonblank("cwd") }
+            "review" -> { payload.exact(setOf("type"), setOf("instructions")); payload.optionalString("instructions")?.requireNotBlank("instructions") }
+            "rename" -> { payload.exact(setOf("type", "name")); payload.nonblank("name") }
+            "select_permission_profile" -> { payload.exact(setOf("type", "profile")); payload.nonblank("profile") }
+            "queue" -> { payload.exact(setOf("type", "action")); payload.enum("action", setOf("pause", "resume", "clear")) }
             else -> throw ProtocolException("unknown command")
         }
     }
@@ -498,11 +671,12 @@ object DomainCodec {
         else -> throw ProtocolException("unknown event presentation")
     }
 
-    private val PROVIDER_CAPABILITIES = setOf("session_state", "tool_events", "plan", "progress", "approval_request", "approval_response", "user_input_request", "user_input_response", "prompt_submit", "cancel")
+    private val PROVIDER_CAPABILITIES = setOf("session_state", "tool_events", "plan", "progress", "approval_request", "approval_response", "user_input_request", "user_input_response", "prompt_submit", "cancel", "control")
     private val CHANNEL_CAPABILITIES = setOf("notification", "session_view", "tool_view", "plan_view", "progress_view", "rich_message", "approval", "choice_input", "text_input", "form_input", "realtime_sync", "remote_command")
     private val AGENT_STATES = setOf("initializing", "idle", "running", "waiting_for_interaction", "completed", "failed", "cancelled")
     private val CONNECTION_STATES = setOf("connected", "reconnecting", "disconnected")
     private val MESSAGE_LEVELS = setOf("info", "warning", "error")
+    private val MESSAGE_ROLES = setOf("user", "assistant", "system")
     private val TOOL_OUTCOMES = setOf("succeeded", "failed", "cancelled")
     private val PLAN_STATUSES = setOf("pending", "in_progress", "completed", "blocked", "skipped")
     private val APPROVAL_DISPOSITIONS = setOf("approve", "reject", "cancel")

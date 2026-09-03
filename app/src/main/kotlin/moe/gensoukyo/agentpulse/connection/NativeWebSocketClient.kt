@@ -14,7 +14,10 @@ import moe.gensoukyo.agentpulse.protocol.NATIVE_SUBPROTOCOL
 import moe.gensoukyo.agentpulse.protocol.NativeClientMessage
 import moe.gensoukyo.agentpulse.protocol.NativeCodec
 import moe.gensoukyo.agentpulse.protocol.NativeSessionReducer
+import moe.gensoukyo.agentpulse.protocol.FormAnswer
+import moe.gensoukyo.agentpulse.protocol.DomainEnvelope
 import moe.gensoukyo.agentpulse.protocol.NativeState
+import moe.gensoukyo.agentpulse.protocol.UuidV7
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -23,11 +26,12 @@ import okhttp3.WebSocketListener
 internal class NativeWebSocketClient(
     private val profile: HostProfile,
     private val clientId: String,
+    initialState: NativeState,
     private val onState: (NativeState) -> Unit,
     private val onEventState: (NativeState, NativeState) -> Unit,
 ) {
     private val completion = CompletableDeferred<Throwable?>()
-    private val reducer = NativeSessionReducer()
+    private val reducer = NativeSessionReducer(initialState = initialState)
     private val client = caClient(
         profile.serverName,
         profile.lastAddress,
@@ -71,6 +75,9 @@ internal class NativeWebSocketClient(
                             clientId = clientId,
                             displayName = android.os.Build.MODEL.ifBlank { "Android" },
                             version = BuildConfig.VERSION_NAME,
+                            hostRunId = reducer.state.hostRunId,
+                            sessionCursors = reducer.state.sessions.mapValues { it.value.cursor }
+                                .filterValues { it > 0UL },
                         ),
                     ),
                 )) {
@@ -139,6 +146,35 @@ internal class NativeWebSocketClient(
             }
         }
 
+    @Synchronized
+    fun submitForm(
+        sessionId: String,
+        interactionId: String,
+        answers: Map<String, FormAnswer>,
+    ): Result<Unit> = runCatching {
+        val webSocket = socket ?: throw IllegalStateException("Native connection is unavailable")
+        val message = reducer.submitForm(sessionId, interactionId, answers)
+        onState(reducer.state)
+        try {
+            if (!webSocket.send(NativeCodec.encode(message))) {
+                throw IllegalStateException("Form response could not be queued")
+            }
+        } catch (error: Exception) {
+            reducer.failApprovalSubmission(message.requestId, error.message ?: "Form response could not be queued")
+            onState(reducer.state)
+            throw error
+        }
+    }
+
+    @Synchronized
+    fun submitCommand(command: DomainEnvelope): Result<Unit> = runCatching {
+        val webSocket = socket ?: throw IllegalStateException("Native connection is unavailable")
+        val message = NativeClientMessage.SubmitCommand(UuidV7.generate(), command)
+        if (!webSocket.send(NativeCodec.encode(message))) {
+            throw IllegalStateException("Command could not be queued")
+        }
+    }
+
     fun close() {
         socket?.close(1000, "user disconnected")
         socket = null
@@ -183,6 +219,10 @@ enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RETRYING }
 
 object ConnectionRuntime {
     private val mutable = MutableStateFlow(ConnectionSnapshot())
+    private val cache = mutableMapOf<String, NativeState>()
     val state: StateFlow<ConnectionSnapshot> = mutable
     internal fun update(value: ConnectionSnapshot) { mutable.value = value }
+    @Synchronized internal fun cached(hostId: String): NativeState = cache[hostId] ?: NativeState()
+    @Synchronized internal fun remember(hostId: String, state: NativeState) { cache[hostId] = state }
+    @Synchronized fun forget(hostId: String) { cache.remove(hostId) }
 }

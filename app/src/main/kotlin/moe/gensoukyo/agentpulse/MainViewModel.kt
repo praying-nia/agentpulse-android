@@ -16,6 +16,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import moe.gensoukyo.agentpulse.connection.ConnectionRuntime
 import moe.gensoukyo.agentpulse.connection.ConnectionService
+import moe.gensoukyo.agentpulse.protocol.FormAnswer
+import moe.gensoukyo.agentpulse.protocol.AgentCommandPayload
+import moe.gensoukyo.agentpulse.protocol.DomainCodec
+import moe.gensoukyo.agentpulse.protocol.UuidV7
 import moe.gensoukyo.agentpulse.connection.PairingClient
 import moe.gensoukyo.agentpulse.data.CredentialVault
 import moe.gensoukyo.agentpulse.data.ConnectionRoute
@@ -112,9 +116,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    fun submitForm(sessionId: String, interactionId: String, answers: Map<String, FormAnswer>) {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, ConnectionService::class.java).apply {
+            action = ConnectionService.ACTION_SUBMIT_FORM
+            putExtra(ConnectionService.EXTRA_SESSION_ID, sessionId)
+            putExtra(ConnectionService.EXTRA_INTERACTION_ID, interactionId)
+            putStringArrayListExtra(ConnectionService.EXTRA_FORM_FIELD_IDS, ArrayList(answers.keys))
+            putStringArrayListExtra(
+                ConnectionService.EXTRA_FORM_ANSWER_TYPES,
+                ArrayList(answers.values.map { if (it is FormAnswer.Choice) "choice" else "text" }),
+            )
+            putStringArrayListExtra(
+                ConnectionService.EXTRA_FORM_ANSWER_VALUES,
+                ArrayList(answers.values.map { answer ->
+                    when (answer) {
+                        is FormAnswer.Choice -> answer.optionId
+                        is FormAnswer.Text -> answer.text
+                    }
+                }),
+            )
+        })
+    }
+
+    fun submitCommand(sessionId: String, payload: AgentCommandPayload) {
+        val channelId = connection.value.native.channelId ?: return
+        val command = DomainCodec.command(UuidV7.generate(), sessionId, channelId, payload)
+        val context = getApplication<Application>()
+        context.startService(Intent(context, ConnectionService::class.java).apply {
+            action = ConnectionService.ACTION_SUBMIT_COMMAND
+            putExtra(ConnectionService.EXTRA_COMMAND_JSON, DomainCodec.encode(command))
+        })
+    }
+
     fun forget(hostId: String) {
         viewModelScope.launch {
             if (connection.value.host?.hostId == hostId) disconnect()
+            ConnectionRuntime.forget(hostId)
             vault.forget(hostId)
             refresh()
         }

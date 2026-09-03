@@ -1,14 +1,35 @@
 package moe.gensoukyo.agentpulse.protocol
 
 class NativeSessionReducer(
-    private val maxEventsPerSession: Int = 256,
+    private val maxEventsPerSession: Int? = null,
+    initialState: NativeState = NativeState(),
     private val idFactory: () -> String = UuidV7::generate,
 ) {
     init {
-        require(maxEventsPerSession > 0)
+        require(maxEventsPerSession == null || maxEventsPerSession > 0)
     }
 
-    var state: NativeState = NativeState()
+    var state: NativeState = initialState.copy(
+        phase = NativeState.Phase.AWAITING_HELLO,
+        channelId = null,
+        lastError = null,
+        sessions = initialState.sessions.mapValues { (_, view) ->
+            view.copy(
+                pendingApprovals = view.pendingApprovals.mapValues { (_, approval) ->
+                    approval.copy(
+                        submissionState = ApprovalSubmissionState.READY,
+                        submissionError = null,
+                    )
+                },
+                pendingForms = view.pendingForms.mapValues { (_, form) ->
+                    form.copy(
+                        submissionState = ApprovalSubmissionState.READY,
+                        submissionError = null,
+                    )
+                },
+            )
+        },
+    )
         private set
 
     private var discovery: Discovery? = null
@@ -27,6 +48,7 @@ class NativeSessionReducer(
             is NativeServerMessage.SubscriptionResult -> subscriptionResult(message)
             is NativeServerMessage.UnsubscriptionResult -> unsubscriptionResult(message)
             is NativeServerMessage.InteractionResponseResult -> interactionResponseResult(message)
+            is NativeServerMessage.CommandResult -> emptyList()
             is NativeServerMessage.Error -> nativeError(message)
         }
     } catch (error: ProtocolException) {
@@ -79,6 +101,49 @@ class NativeSessionReducer(
     }
 
     @Synchronized
+    fun submitForm(
+        sessionId: String,
+        interactionId: String,
+        answers: Map<String, FormAnswer>,
+    ): NativeClientMessage.SubmitInteractionResponse {
+        if (state.phase != NativeState.Phase.LIVE) throw ProtocolException("Native connection is not live")
+        val channelId = state.channelId ?: throw ProtocolException("Native channel identity is unavailable")
+        val view = state.sessions[sessionId] ?: throw ProtocolException("form session is unavailable")
+        val form = view.pendingForms[interactionId] ?: throw ProtocolException("form is no longer pending")
+        if (!form.interactive) throw ProtocolException("form is read-only")
+        if (form.submissionState == ApprovalSubmissionState.SUBMITTING) {
+            throw ProtocolException("form response is already being submitted")
+        }
+        if (answers.keys != form.fields.map(FormField::id).toSet()) {
+            throw ProtocolException("form response must answer every field exactly once")
+        }
+        form.fields.forEach { field ->
+            when (val answer = answers.getValue(field.id)) {
+                is FormAnswer.Choice -> if (field.options.none { it.id == answer.optionId }) {
+                    throw ProtocolException("form option is unavailable")
+                }
+                is FormAnswer.Text -> if (!field.allowsOther || answer.text.isBlank()) {
+                    throw ProtocolException("form custom answer is unavailable")
+                }
+            }
+        }
+        val requestId = idFactory()
+        state = state.copy(sessions = state.sessions + (
+            sessionId to view.copy(pendingForms = view.pendingForms + (
+                interactionId to form.copy(
+                    submissionState = ApprovalSubmissionState.SUBMITTING,
+                    submissionError = null,
+                )
+            ))
+        ))
+        approvalSubmissions[requestId] = ApprovalSubmission(sessionId, interactionId)
+        return NativeClientMessage.SubmitInteractionResponse(
+            requestId,
+            DomainCodec.formResponse(interactionId, sessionId, channelId, answers),
+        )
+    }
+
+    @Synchronized
     fun failApprovalSubmission(requestId: String, message: String) {
         val submission = approvalSubmissions.remove(requestId)
             ?: throw ProtocolException("approval submission is no longer pending")
@@ -105,6 +170,8 @@ class NativeSessionReducer(
             phase = NativeState.Phase.DISCOVERING,
             channelId = DomainCodec.channelId(message.channel),
             lastError = null,
+            hostRunId = message.hostRunId,
+            sessions = if (message.resumeAccepted) state.sessions else emptyMap(),
         )
         discovery = Discovery(requestId = requestId)
         return listOf(NativeClientMessage.Discover(requestId))
@@ -139,12 +206,14 @@ class NativeSessionReducer(
     }
 
     private fun syncCompleted(message: NativeServerMessage.SyncCompleted): List<NativeClientMessage> {
+        pendingSubscription?.takeIf { it.requestId == message.requestId }?.let {
+            return completeSubscriptionPage(it)
+        }
         val current = requireDiscovery(message.requestId)
         if (current.providers.size != current.expectedProviders || current.sessions.size != current.expectedSessions) throw ProtocolException("incomplete discovery batch")
-        val sessions = if (current.refresh) {
-            current.sessions + state.sessions
-        } else {
-            current.sessions
+        val sessions = current.sessions.mapValues { (sessionId, discovered) ->
+            state.sessions[sessionId]?.copy(session = discovered.session)
+                ?: discovered.copy(cursor = 0UL)
         }
         val newSessions = current.sessions.keys.filterNot(subscriptions::contains).sorted()
         state = state.copy(
@@ -162,20 +231,31 @@ class NativeSessionReducer(
         val pending = pendingSubscription ?: throw ProtocolException("subscription result without request")
         if (pending.requestId != message.requestId || pending.sessionId != message.sessionId) throw ProtocolException("mismatched subscription result")
         val discovered = state.sessions[message.sessionId] ?: throw ProtocolException("subscription targets unknown session")
-        if (message.baselineSequence < discovered.cursor) {
-            throw ProtocolException("baseline cursor regressed after discovery")
-        }
         if (message.status == "already_subscribed") {
             if (message.pendingInteractionCount != 0) throw ProtocolException("repeated subscription cannot carry a baseline")
             subscriptions += message.sessionId
             pendingSubscription = null
             return nextSubscription()
         }
-        subscriptions += message.sessionId
+        if (message.status == "catching_up" && message.pendingInteractionCount != 0) {
+            throw ProtocolException("catch-up page cannot carry pending interactions")
+        }
+        val base = if (message.reset) {
+            SessionView(discovered.session, 0UL, emptyList())
+        } else {
+            state.sessions[message.sessionId] ?: discovered
+        }
+        if (!message.reset && message.baselineSequence < base.cursor) {
+            throw ProtocolException("session sync cursor regressed")
+        }
         pendingSubscription = pending.copy(
             resultReceived = true,
             baselineSequence = message.baselineSequence,
             expectedInteractions = message.pendingInteractionCount,
+            expectedEvents = message.eventCount,
+            status = message.status,
+            reset = message.reset,
+            stagedView = base,
         )
         return emptyList()
     }
@@ -186,18 +266,15 @@ class NativeSessionReducer(
         if (pending.sessionReceived) throw ProtocolException("duplicate subscription session baseline")
         val session = DomainCodec.session(domain)
         if (session.id != pending.sessionId) throw ProtocolException("baseline session mismatch")
-        state = state.copy(
-            sessions = state.sessions + (
-                session.id to SessionView(
-                    session = session,
-                    cursor = pending.baselineSequence,
-                    events = emptyList(),
-                    pendingApprovals = emptyMap(),
-                )
-            ),
+        val staged = pending.stagedView ?: throw ProtocolException("subscription page has no staged state")
+        if (staged.cursor != pending.baselineSequence && pending.expectedEvents != 0) {
+            throw ProtocolException("baseline does not match synchronized events")
+        }
+        pendingSubscription = pending.copy(
+            sessionReceived = true,
+            stagedView = staged.copy(session = session, cursor = pending.baselineSequence),
         )
-        pendingSubscription = pending.copy(sessionReceived = true)
-        return finishBaselineIfComplete()
+        return emptyList()
     }
 
     private fun baselineInteraction(
@@ -211,30 +288,29 @@ class NativeSessionReducer(
         if (pending.receivedInteractions >= pending.expectedInteractions) {
             throw ProtocolException("too many interaction baseline frames")
         }
-        val approval = DomainCodec.approvalRequest(domain).copy(
-            interactive = context.route == "interaction_interactive",
-        )
-        if (approval.sessionId != pending.sessionId) throw ProtocolException("interaction baseline session mismatch")
-        val view = state.sessions.getValue(pending.sessionId)
-        if (approval.id in view.pendingApprovals) throw ProtocolException("duplicate baseline interaction")
-        state = state.copy(
-            sessions = state.sessions + (
-                pending.sessionId to view.copy(
-                    pendingApprovals = view.pendingApprovals + (approval.id to approval),
+        val interactive = context.route == "interaction_interactive"
+        pendingSubscription = when (DomainCodec.interactionType(domain)) {
+            "approval" -> {
+                val approval = DomainCodec.approvalRequest(domain).copy(interactive = interactive)
+                if (approval.sessionId != pending.sessionId) throw ProtocolException("interaction baseline session mismatch")
+                if (approval.id in pending.baselineApprovals) throw ProtocolException("duplicate baseline interaction")
+                pending.copy(
+                    receivedInteractions = pending.receivedInteractions + 1,
+                    baselineApprovals = pending.baselineApprovals + (approval.id to approval),
                 )
-            ),
-        )
-        pendingSubscription = pending.copy(receivedInteractions = pending.receivedInteractions + 1)
-        return finishBaselineIfComplete()
-    }
-
-    private fun finishBaselineIfComplete(): List<NativeClientMessage> {
-        val pending = pendingSubscription ?: throw ProtocolException("subscription baseline disappeared")
-        if (!pending.sessionReceived || pending.receivedInteractions != pending.expectedInteractions) {
-            return emptyList()
+            }
+            "form" -> {
+                val form = DomainCodec.formRequest(domain).copy(interactive = interactive)
+                if (form.sessionId != pending.sessionId) throw ProtocolException("interaction baseline session mismatch")
+                if (form.id in pending.baselineForms) throw ProtocolException("duplicate baseline interaction")
+                pending.copy(
+                    receivedInteractions = pending.receivedInteractions + 1,
+                    baselineForms = pending.baselineForms + (form.id to form),
+                )
+            }
+            else -> throw ProtocolException("unsupported pending interaction")
         }
-        pendingSubscription = null
-        return nextSubscription()
+        return emptyList()
     }
 
     private fun nextSubscription(): List<NativeClientMessage> {
@@ -250,34 +326,79 @@ class NativeSessionReducer(
 
     private fun liveEvent(domain: DomainEnvelope, route: String): List<NativeClientMessage> {
         val event = DomainCodec.event(domain)
+        val pending = pendingSubscription
+        if (pending?.resultReceived == true && pending.sessionId == event.sessionId) {
+            if (pending.receivedEvents >= pending.expectedEvents) throw ProtocolException("too many synchronized events")
+            val current = pending.stagedView ?: throw ProtocolException("subscription page has no staged state")
+            pendingSubscription = pending.copy(
+                receivedEvents = pending.receivedEvents + 1,
+                stagedView = applyEvent(current, event, route),
+            )
+            return emptyList()
+        }
         val current = state.sessions[event.sessionId] ?: throw ProtocolException("event for unknown session")
+        state = state.copy(sessions = state.sessions + (event.sessionId to applyEvent(current, event, route)))
+        return emptyList()
+    }
+
+    private fun applyEvent(current: SessionView, event: EventRecord, route: String): SessionView {
         if (event.sequence != current.cursor + 1UL) throw ProtocolException("event sequence gap for ${event.sessionId}")
-        val events = (current.events + event).takeLast(maxEventsPerSession)
+        val appended = current.events + event
+        val events = maxEventsPerSession?.let(appended::takeLast) ?: appended
         var approvals = current.pendingApprovals
+        var forms = current.pendingForms
         event.approval?.let { approval ->
             if (approval.id in approvals) throw ProtocolException("interaction is already pending")
             approvals = approvals + (
                 approval.id to approval.copy(interactive = route == "interaction_interactive")
             )
         }
+        event.form?.let { form ->
+            if (form.id in forms) throw ProtocolException("interaction is already pending")
+            forms = forms + (form.id to form.copy(interactive = route == "interaction_interactive"))
+        }
         event.terminalInteractionId?.let { interactionId ->
             approvals = approvals - interactionId
+            forms = forms - interactionId
             approvalSubmissions.entries.removeAll { it.value.interactionId == interactionId }
         }
         if (event.type == "session_ended") {
             approvals = emptyMap()
+            forms = emptyMap()
             approvalSubmissions.entries.removeAll { it.value.sessionId == event.sessionId }
         }
-        state = state.copy(
-            sessions = state.sessions + (
-                event.sessionId to current.copy(
-                    cursor = event.sequence,
-                    events = events,
-                    pendingApprovals = approvals,
-                )
-            ),
+        return current.copy(
+            cursor = event.sequence,
+            events = events,
+            pendingApprovals = approvals,
+            pendingForms = forms,
         )
-        return emptyList()
+    }
+
+    private fun completeSubscriptionPage(pending: PendingSubscription): List<NativeClientMessage> {
+        if (!pending.resultReceived || pending.receivedEvents != pending.expectedEvents) {
+            throw ProtocolException("incomplete session synchronization page")
+        }
+        val staged = pending.stagedView ?: throw ProtocolException("subscription page has no staged state")
+        if (staged.cursor != pending.baselineSequence) throw ProtocolException("session synchronization cursor mismatch")
+        val subscribed = pending.status == "subscribed" || pending.status == "already_subscribed"
+        if (subscribed && (!pending.sessionReceived || pending.receivedInteractions != pending.expectedInteractions)) {
+            throw ProtocolException("incomplete live subscription baseline")
+        }
+        val committed = if (subscribed) staged.copy(
+            pendingApprovals = pending.baselineApprovals,
+            pendingForms = pending.baselineForms,
+        ) else staged
+        state = state.copy(sessions = state.sessions + (pending.sessionId to committed))
+        pendingSubscription = null
+        return if (subscribed) {
+            subscriptions += pending.sessionId
+            nextSubscription()
+        } else {
+            val requestId = idFactory()
+            pendingSubscription = PendingSubscription(requestId, pending.sessionId)
+            listOf(NativeClientMessage.Subscribe(requestId, pending.sessionId))
+        }
     }
 
     private fun interactionResponseResult(message: NativeServerMessage.InteractionResponseResult): List<NativeClientMessage> {
@@ -307,16 +428,24 @@ class NativeSessionReducer(
     private fun markApprovalFailed(submission: ApprovalSubmission, message: String) {
         val view = state.sessions[submission.sessionId]
             ?: throw ProtocolException("approval error targets unknown session")
-        val approval = view.pendingApprovals[submission.interactionId] ?: return
+        val approval = view.pendingApprovals[submission.interactionId]
+        val form = view.pendingForms[submission.interactionId]
+        if (approval == null && form == null) return
         state = state.copy(
             sessions = state.sessions + (
                 submission.sessionId to view.copy(
-                    pendingApprovals = view.pendingApprovals + (
-                        submission.interactionId to approval.copy(
+                    pendingApprovals = approval?.let {
+                        view.pendingApprovals + (submission.interactionId to it.copy(
                             submissionState = ApprovalSubmissionState.FAILED,
                             submissionError = message,
-                        )
-                    ),
+                        ))
+                    } ?: view.pendingApprovals,
+                    pendingForms = form?.let {
+                        view.pendingForms + (submission.interactionId to it.copy(
+                            submissionState = ApprovalSubmissionState.FAILED,
+                            submissionError = message,
+                        ))
+                    } ?: view.pendingForms,
                 )
             ),
             lastError = message,
@@ -354,6 +483,13 @@ class NativeSessionReducer(
         val expectedInteractions: Int = 0,
         val receivedInteractions: Int = 0,
         val sessionReceived: Boolean = false,
+        val expectedEvents: Int = 0,
+        val receivedEvents: Int = 0,
+        val status: String? = null,
+        val reset: Boolean = false,
+        val stagedView: SessionView? = null,
+        val baselineApprovals: Map<String, ApprovalPrompt> = emptyMap(),
+        val baselineForms: Map<String, FormPrompt> = emptyMap(),
     )
 
     private data class ApprovalSubmission(val sessionId: String, val interactionId: String)

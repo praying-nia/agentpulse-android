@@ -51,8 +51,9 @@
     <string name="action_required">需要处理</string>
     <string name="updated">更新时间</string>
     <string name="message_placeholder">发送消息…</string>
-    <string name="send_unavailable">暂不支持发送</string>
-    <string name="composer_unavailable">当前版本仅支持查看与审批，暂不支持发送消息。</string>
+    <string name="send">发送</string>
+    <string name="plan_on">启用 Plan 模式</string>
+    <string name="plan_off">关闭 Plan 模式</string>
     <string name="workspace">工作区</string>
     <string name="provider">Provider</string>
     <string name="status">状态</string>
@@ -96,6 +97,11 @@
     <string name="approval_read_only">此请求只能由另一个 Codex 客户端处理。</string>
     <string name="approval_confirm">将这个决定发送给 Codex？</string>
     <string name="approval_submit_failed">无法提交审批结果。</string>
+    <string name="form_answer">回答</string>
+    <string name="form_other">其他</string>
+    <string name="form_submit">提交回答</string>
+    <string name="form_submitting">正在等待 Codex…</string>
+    <string name="form_read_only">此请求只能由另一个 Codex 客户端回答。</string>
     <string name="connection_unavailable">Host 连接当前不可用。</string>
     <string name="appearance">外观</string>
     <string name="theme_mode">主题模式</string>

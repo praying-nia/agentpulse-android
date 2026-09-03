@@ -4,6 +4,7 @@ import kotlinx.serialization.json.buildJsonObject
 import moe.gensoukyo.agentpulse.data.formatHexColor
 import moe.gensoukyo.agentpulse.data.parseHexColor
 import moe.gensoukyo.agentpulse.protocol.DomainEnvelope
+import moe.gensoukyo.agentpulse.protocol.AgentCommandPayload
 import moe.gensoukyo.agentpulse.protocol.EventImportance
 import moe.gensoukyo.agentpulse.protocol.EventRecord
 import moe.gensoukyo.agentpulse.protocol.SessionSnapshot
@@ -45,6 +46,18 @@ class PresentationTest {
         assertEquals("#5B7BE7", formatHexColor(0xFF5B7BE7.toInt()))
         assertNull(parseHexColor("#12345"))
         assertNull(parseHexColor("#ZZZZZZ"))
+    }
+
+    @Test
+    fun composerParsesMessagesAndTheBoundedSlashCommandSet() {
+        assertEquals(AgentCommandPayload.SubmitPrompt("hello"), parseComposerCommand(" hello ", "/workspace"))
+        assertEquals(AgentCommandPayload.ListModels, parseComposerCommand("/model", "/workspace"))
+        assertEquals(AgentCommandPayload.SelectModel("gpt-5.6", "high"), parseComposerCommand("/model gpt-5.6 high", "/workspace"))
+        assertEquals(AgentCommandPayload.ListThreads(), parseComposerCommand("/resume", "/workspace"))
+        assertEquals(AgentCommandPayload.StartThread("/workspace"), parseComposerCommand("/clear", "/workspace"))
+        assertEquals(AgentCommandPayload.SetPlanMode(false), parseComposerCommand("/plan off", "/workspace"))
+        assertEquals(AgentCommandPayload.Cancel, parseComposerCommand("/stop", "/workspace"))
+        assertNull(parseComposerCommand("/unknown", "/workspace"))
     }
 
     private fun session(title: String, state: String, updatedAt: String) = SessionView(

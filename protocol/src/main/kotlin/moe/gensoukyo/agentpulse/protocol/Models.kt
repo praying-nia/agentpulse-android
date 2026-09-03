@@ -2,11 +2,11 @@ package moe.gensoukyo.agentpulse.protocol
 
 import kotlinx.serialization.json.JsonObject
 
-const val DOMAIN_PROTOCOL_VERSION: Int = 1
-const val NATIVE_TRANSPORT_VERSION: Int = 1
+const val DOMAIN_PROTOCOL_VERSION: Int = 2
+const val NATIVE_TRANSPORT_VERSION: Int = 3
 const val PAIRING_PROTOCOL_VERSION: Int = 1
-const val NATIVE_PATH: String = "/agentpulse/native/v1"
-const val NATIVE_SUBPROTOCOL: String = "agentpulse.native.v1"
+const val NATIVE_PATH: String = "/agentpulse/native/v3"
+const val NATIVE_SUBPROTOCOL: String = "agentpulse.native.v3"
 const val PAIRING_PATH: String = "/agentpulse/pair/v1"
 const val PAIRING_SUBPROTOCOL: String = "agentpulse.pair.v1"
 
@@ -51,10 +51,59 @@ data class EventRecord(
     val title: String,
     val detail: String?,
     val importance: EventImportance,
+    val messageRole: String? = null,
     val approval: ApprovalPrompt? = null,
+    val form: FormPrompt? = null,
     val terminalInteractionId: String? = null,
     val raw: DomainEnvelope,
 )
+
+data class FormOption(val id: String, val label: String, val description: String?)
+
+data class FormField(
+    val id: String,
+    val header: String,
+    val prompt: String,
+    val options: List<FormOption>,
+    val allowsOther: Boolean,
+    val sensitive: Boolean,
+)
+
+sealed interface FormAnswer {
+    data class Choice(val optionId: String) : FormAnswer
+    data class Text(val text: String) : FormAnswer
+}
+
+data class FormPrompt(
+    val id: String,
+    val sessionId: String,
+    val requestedAt: String,
+    val prompt: String,
+    val fields: List<FormField>,
+    val blocking: Boolean,
+    val interactive: Boolean = false,
+    val submissionState: ApprovalSubmissionState = ApprovalSubmissionState.READY,
+    val submissionError: String? = null,
+)
+
+sealed interface AgentCommandPayload {
+    data class SubmitPrompt(val text: String, val steer: Boolean = false) : AgentCommandPayload
+    data object Cancel : AgentCommandPayload
+    data object ListModels : AgentCommandPayload
+    data class SelectModel(val model: String, val effort: String? = null) : AgentCommandPayload
+    data class SetPlanMode(val enabled: Boolean) : AgentCommandPayload
+    data class ListThreads(val cursor: String? = null) : AgentCommandPayload
+    data class ResumeThread(val threadId: String) : AgentCommandPayload
+    data class StartThread(val cwd: String) : AgentCommandPayload
+    data object Compact : AgentCommandPayload
+    data class Review(val instructions: String? = null) : AgentCommandPayload
+    data class Rename(val name: String) : AgentCommandPayload
+    data object Fork : AgentCommandPayload
+    data object Status : AgentCommandPayload
+    data object ListPermissionProfiles : AgentCommandPayload
+    data class SelectPermissionProfile(val profile: String) : AgentCommandPayload
+    data class Queue(val action: String) : AgentCommandPayload
+}
 
 sealed interface ApprovalSubject {
     data class Command(
@@ -104,6 +153,8 @@ sealed interface NativeClientMessage {
         val displayName: String,
         val version: String?,
         val supportedProtocolVersions: List<Int> = listOf(DOMAIN_PROTOCOL_VERSION),
+        val hostRunId: String? = null,
+        val sessionCursors: Map<String, ULong> = emptyMap(),
     ) : NativeClientMessage
 
     data class Discover(val requestId: String) : NativeClientMessage
@@ -112,6 +163,10 @@ sealed interface NativeClientMessage {
     data class SubmitInteractionResponse(
         val requestId: String,
         val response: DomainEnvelope,
+    ) : NativeClientMessage
+    data class SubmitCommand(
+        val requestId: String,
+        val command: DomainEnvelope,
     ) : NativeClientMessage
 }
 
@@ -132,6 +187,8 @@ sealed interface NativeServerMessage {
         val maxFrameBytes: Int,
         val pingIntervalSeconds: Long,
         val idleTimeoutSeconds: Long,
+        val hostRunId: String = "01890f47-7c00-7000-8000-000000000011",
+        val resumeAccepted: Boolean = false,
     ) : NativeServerMessage
 
     data class SyncStarted(
@@ -153,6 +210,8 @@ sealed interface NativeServerMessage {
         val status: String,
         val baselineSequence: ULong,
         val pendingInteractionCount: Int,
+        val eventCount: Int = 0,
+        val reset: Boolean = false,
     ) : NativeServerMessage
 
     data class UnsubscriptionResult(
@@ -165,6 +224,12 @@ sealed interface NativeServerMessage {
         val requestId: String,
         val sessionId: String,
         val interactionId: String,
+    ) : NativeServerMessage
+
+    data class CommandResult(
+        val requestId: String,
+        val sessionId: String,
+        val commandId: String,
     ) : NativeServerMessage
 
     data class Error(
@@ -219,6 +284,7 @@ data class SessionView(
     val cursor: ULong,
     val events: List<EventRecord>,
     val pendingApprovals: Map<String, ApprovalPrompt> = emptyMap(),
+    val pendingForms: Map<String, FormPrompt> = emptyMap(),
 )
 
 data class NativeState(
@@ -227,6 +293,7 @@ data class NativeState(
     val sessions: Map<String, SessionView> = emptyMap(),
     val channelId: String? = null,
     val lastError: String? = null,
+    val hostRunId: String? = null,
 ) {
     enum class Phase { AWAITING_HELLO, DISCOVERING, SUBSCRIBING, LIVE, FAILED }
 }

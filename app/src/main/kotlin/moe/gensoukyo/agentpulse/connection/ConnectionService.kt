@@ -24,6 +24,7 @@ import moe.gensoukyo.agentpulse.data.CredentialVault
 import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.protocol.EventImportance
+import moe.gensoukyo.agentpulse.protocol.FormAnswer
 import moe.gensoukyo.agentpulse.protocol.NativeState
 
 class ConnectionService : LifecycleService() {
@@ -32,6 +33,7 @@ class ConnectionService : LifecycleService() {
     private var connectionJob: Job? = null
     private var client: NativeWebSocketClient? = null
     private var desiredHostId: String? = null
+    private val notifiedPending = mutableSetOf<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -46,6 +48,8 @@ class ConnectionService : LifecycleService() {
             ACTION_CONNECT -> intent.getStringExtra(EXTRA_HOST_ID)?.let(::connect)
             ACTION_DISCONNECT -> disconnect()
             ACTION_SUBMIT_APPROVAL -> submitApproval(intent)
+            ACTION_SUBMIT_FORM -> submitForm(intent)
+            ACTION_SUBMIT_COMMAND -> submitCommand(intent)
         }
         return Service.START_NOT_STICKY
     }
@@ -81,12 +85,20 @@ class ConnectionService : LifecycleService() {
                         profile = profile.copy(lastAddress = endpoint.address, lastPort = endpoint.port)
                     }
                 }
-                ConnectionRuntime.update(ConnectionSnapshot(profile, ConnectionPhase.CONNECTING))
+                ConnectionRuntime.update(
+                    ConnectionSnapshot(
+                        profile,
+                        ConnectionPhase.CONNECTING,
+                        ConnectionRuntime.cached(hostId),
+                    ),
+                )
                 notifications.notify(ONGOING_ID, ongoingNotification(getString(R.string.connecting_to, profile.hostName)))
                 val socket = NativeWebSocketClient(
                     profile = profile,
                     clientId = snapshot.clientId,
+                    initialState = ConnectionRuntime.cached(hostId),
                     onState = { native ->
+                        ConnectionRuntime.remember(hostId, native)
                         val phase = if (native.phase == NativeState.Phase.LIVE) ConnectionPhase.CONNECTED else ConnectionPhase.CONNECTING
                         ConnectionRuntime.update(ConnectionSnapshot(profile, phase, native))
                     },
@@ -103,6 +115,7 @@ class ConnectionService : LifecycleService() {
                     ConnectionSnapshot(
                         host = profile,
                         connection = ConnectionPhase.RETRYING,
+                        native = ConnectionRuntime.cached(hostId),
                         error = failure?.message ?: getString(R.string.connection_lost, profile.hostName),
                         retrySeconds = waitSeconds,
                     ),
@@ -147,13 +160,77 @@ class ConnectionService : LifecycleService() {
         }
     }
 
+    private fun submitForm(intent: Intent) {
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: return
+        val interactionId = intent.getStringExtra(EXTRA_INTERACTION_ID) ?: return
+        val fieldIds = intent.getStringArrayListExtra(EXTRA_FORM_FIELD_IDS) ?: return
+        val answerTypes = intent.getStringArrayListExtra(EXTRA_FORM_ANSWER_TYPES) ?: return
+        val values = intent.getStringArrayListExtra(EXTRA_FORM_ANSWER_VALUES) ?: return
+        if (fieldIds.size != answerTypes.size || fieldIds.size != values.size) return
+        val answers = fieldIds.indices.associate { index ->
+            fieldIds[index] to when (answerTypes[index]) {
+                "choice" -> FormAnswer.Choice(values[index])
+                "text" -> FormAnswer.Text(values[index])
+                else -> return
+            }
+        }
+        val result = client?.submitForm(sessionId, interactionId, answers)
+            ?: Result.failure(IllegalStateException(getString(R.string.connection_unavailable)))
+        result.onFailure { error ->
+            ConnectionRuntime.update(ConnectionRuntime.state.value.copy(error = error.message))
+        }
+    }
+
+    private fun submitCommand(intent: Intent) {
+        val command = intent.getStringExtra(EXTRA_COMMAND_JSON)?.let {
+            runCatching { moe.gensoukyo.agentpulse.protocol.DomainCodec.decode(it) }.getOrNull()
+        } ?: return
+        val result = client?.submitCommand(command)
+            ?: Result.failure(IllegalStateException(getString(R.string.connection_unavailable)))
+        result.onFailure { error ->
+            ConnectionRuntime.update(ConnectionRuntime.state.value.copy(error = error.message))
+        }
+    }
+
     private fun notifyImportantEvents(profile: HostProfile, before: NativeState, after: NativeState) {
+        val pendingIds = after.sessions.values.flatMap { it.pendingApprovals.keys + it.pendingForms.keys }.toSet()
+        notifiedPending.retainAll(pendingIds)
+        if (after.phase != NativeState.Phase.LIVE) return
+        if (before.phase != NativeState.Phase.LIVE) {
+            after.sessions.forEach { (sessionId, view) ->
+                view.pendingApprovals.values.filter { it.interactive }.forEach { approval ->
+                    if (notifiedPending.add(approval.id)) {
+                        notifyAlert(
+                            sessionId.hashCode(),
+                            getString(R.string.interaction_waiting, view.session.title ?: profile.hostName),
+                            approval.prompt,
+                            sessionId,
+                        )
+                    }
+                }
+                view.pendingForms.values.filter { it.interactive }.forEach { form ->
+                    if (notifiedPending.add(form.id)) {
+                        notifyAlert(
+                            sessionId.hashCode(),
+                            getString(R.string.interaction_waiting, view.session.title ?: profile.hostName),
+                            form.prompt,
+                            sessionId,
+                        )
+                    }
+                }
+            }
+            return
+        }
         after.sessions.forEach { (sessionId, view) ->
             val previous = before.sessions[sessionId]?.cursor ?: 0UL
             view.events.filter { it.sequence > previous }.forEach { event ->
                 when (event.importance) {
                     EventImportance.WARNING, EventImportance.ERROR -> notifyAlert(sessionId.hashCode(), profile.hostName, event.detail ?: event.title, sessionId)
-                    EventImportance.INTERACTION -> notifyAlert(sessionId.hashCode(), getString(R.string.interaction_waiting, view.session.title ?: profile.hostName), event.detail, sessionId)
+                    EventImportance.INTERACTION -> {
+                        event.approval?.let { notifiedPending += it.id }
+                        event.form?.let { notifiedPending += it.id }
+                        notifyAlert(sessionId.hashCode(), getString(R.string.interaction_waiting, view.session.title ?: profile.hostName), event.detail, sessionId)
+                    }
                     EventImportance.OUTCOME -> notifyAlert(sessionId.hashCode(), getString(R.string.session_finished, view.session.title ?: profile.hostName), event.detail, sessionId)
                     EventImportance.NORMAL -> Unit
                 }
@@ -204,10 +281,16 @@ class ConnectionService : LifecycleService() {
         const val ACTION_CONNECT = "moe.gensoukyo.agentpulse.CONNECT"
         const val ACTION_DISCONNECT = "moe.gensoukyo.agentpulse.DISCONNECT"
         const val ACTION_SUBMIT_APPROVAL = "moe.gensoukyo.agentpulse.SUBMIT_APPROVAL"
+        const val ACTION_SUBMIT_FORM = "moe.gensoukyo.agentpulse.SUBMIT_FORM"
+        const val ACTION_SUBMIT_COMMAND = "moe.gensoukyo.agentpulse.SUBMIT_COMMAND"
         const val EXTRA_HOST_ID = "host_id"
         const val EXTRA_SESSION_ID = "session_id"
         const val EXTRA_INTERACTION_ID = "interaction_id"
         const val EXTRA_OPTION_ID = "option_id"
+        const val EXTRA_FORM_FIELD_IDS = "form_field_ids"
+        const val EXTRA_FORM_ANSWER_TYPES = "form_answer_types"
+        const val EXTRA_FORM_ANSWER_VALUES = "form_answer_values"
+        const val EXTRA_COMMAND_JSON = "command_json"
         private const val CONNECTION_CHANNEL = "agentpulse-connection"
         private const val EVENT_CHANNEL = "agentpulse-events"
         private const val ONGOING_ID = 101

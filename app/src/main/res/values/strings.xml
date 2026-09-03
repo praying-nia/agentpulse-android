@@ -51,8 +51,9 @@
     <string name="action_required">Action required</string>
     <string name="updated">Updated</string>
     <string name="message_placeholder">Send a message…</string>
-    <string name="send_unavailable">Sending is not available</string>
-    <string name="composer_unavailable">This version supports viewing and approvals only. Sending messages is not available yet.</string>
+    <string name="send">Send</string>
+    <string name="plan_on">Enable Plan mode</string>
+    <string name="plan_off">Disable Plan mode</string>
     <string name="workspace">Workspace</string>
     <string name="provider">Provider</string>
     <string name="status">Status</string>
@@ -97,6 +98,11 @@
     <string name="approval_read_only">This request can only be resolved from another Codex client.</string>
     <string name="approval_confirm">Send this decision to Codex?</string>
     <string name="approval_submit_failed">Could not submit the approval response.</string>
+    <string name="form_answer">Answer</string>
+    <string name="form_other">Other</string>
+    <string name="form_submit">Submit answers</string>
+    <string name="form_submitting">Waiting for Codex…</string>
+    <string name="form_read_only">This request can only be answered from another Codex client.</string>
     <string name="connection_unavailable">The Host connection is unavailable.</string>
     <string name="appearance">Appearance</string>
     <string name="theme_mode">Theme mode</string>

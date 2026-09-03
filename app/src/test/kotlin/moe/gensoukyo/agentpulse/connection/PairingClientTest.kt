@@ -46,8 +46,8 @@ class PairingClientTest {
         nativeAddress = "127.0.0.1",
         nativePort = 49_320,
         accessToken = "device-secret",
-        nativeTransportVersion = 1,
-        domainProtocolVersions = listOf(1),
+        nativeTransportVersion = 3,
+        domainProtocolVersions = listOf(2),
     )
 
     private companion object {

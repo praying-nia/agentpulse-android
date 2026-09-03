@@ -12,6 +12,8 @@ import moe.gensoukyo.agentpulse.data.ConnectionRoute
 import moe.gensoukyo.agentpulse.data.HostProfile
 import moe.gensoukyo.agentpulse.protocol.PAIRING_PATH
 import moe.gensoukyo.agentpulse.protocol.PAIRING_SUBPROTOCOL
+import moe.gensoukyo.agentpulse.protocol.DOMAIN_PROTOCOL_VERSION
+import moe.gensoukyo.agentpulse.protocol.NATIVE_TRANSPORT_VERSION
 import moe.gensoukyo.agentpulse.protocol.PairingBundle
 import moe.gensoukyo.agentpulse.protocol.PairingCodec
 import moe.gensoukyo.agentpulse.protocol.PairingRequest
@@ -143,8 +145,8 @@ internal fun pairedRelayProfile(
     if (
         message.hostId != bundle.hostId ||
         message.serverName != bundle.serverName ||
-        message.nativeTransportVersion != 1 ||
-        1 !in message.domainProtocolVersions
+        message.nativeTransportVersion != NATIVE_TRANSPORT_VERSION ||
+        DOMAIN_PROTOCOL_VERSION !in message.domainProtocolVersions
     ) throw IllegalStateException("Host identity or protocol changed during pairing")
     return HostProfile(
         hostId = message.hostId,

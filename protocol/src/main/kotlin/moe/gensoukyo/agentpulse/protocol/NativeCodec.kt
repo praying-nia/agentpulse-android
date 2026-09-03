@@ -22,6 +22,9 @@ object NativeCodec {
                 if (message.supportedProtocolVersions.distinct().size != message.supportedProtocolVersions.size || message.supportedProtocolVersions.any { it <= 0 }) {
                     throw ProtocolException("supported protocol versions must be unique and positive")
                 }
+                if (message.hostRunId == null && message.sessionCursors.isNotEmpty()) {
+                    throw ProtocolException("Session cursors require host_run_id")
+                }
                 buildJsonObject {
                     put("type", "client_hello")
                     put("client_id", message.clientId)
@@ -33,6 +36,18 @@ object NativeCodec {
                             message.supportedProtocolVersions.forEach { add(JsonPrimitive(it)) }
                         },
                     )
+                    message.hostRunId?.let { put("host_run_id", UuidV7.require(it, "host_run_id")) }
+                    if (message.sessionCursors.isNotEmpty()) {
+                        put("session_cursors", buildJsonArray {
+                            message.sessionCursors.toSortedMap().forEach { (sessionId, sequence) ->
+                                if (sequence == 0UL) throw ProtocolException("Session cursor must be positive")
+                                add(buildJsonObject {
+                                    put("session_id", UuidV7.require(sessionId, "session_id"))
+                                    put("last_sequence", sequence.toString())
+                                })
+                            }
+                        })
+                    }
                 }
             }
             is NativeClientMessage.Discover -> request("discover_sessions", message.requestId)
@@ -47,6 +62,15 @@ object NativeCodec {
                     put("type", "submit_interaction_response")
                     put("request_id", message.requestId)
                     put("response", DomainCodec.encodeElement(message.response))
+                }
+            }
+            is NativeClientMessage.SubmitCommand -> {
+                UuidV7.require(message.requestId, "request_id")
+                if (message.command.type != "agent_command") throw ProtocolException("submit_command requires an agent_command domain message")
+                buildJsonObject {
+                    put("type", "submit_command")
+                    put("request_id", message.requestId)
+                    put("command", DomainCodec.encodeElement(message.command))
                 }
             }
         }
@@ -79,13 +103,15 @@ object NativeCodec {
                 message.exact(setOf("type", "request_id")); NativeServerMessage.SyncCompleted(uuid(message, "request_id"))
             }
             "subscription_result" -> {
-                message.exact(setOf("type", "request_id", "session_id", "status", "baseline_sequence", "pending_interaction_count"))
+                message.exact(setOf("type", "request_id", "session_id", "status", "baseline_sequence", "pending_interaction_count", "event_count", "reset"))
                 NativeServerMessage.SubscriptionResult(
                     uuid(message, "request_id"),
                     uuid(message, "session_id"),
-                    message.enum("status", setOf("subscribed", "already_subscribed")),
+                    message.enum("status", setOf("catching_up", "subscribed", "already_subscribed")),
                     message.u64("baseline_sequence"),
                     nonnegativeInt(message, "pending_interaction_count"),
+                    nonnegativeInt(message, "event_count"),
+                    message.boolean("reset"),
                 )
             }
             "unsubscription_result" -> {
@@ -104,18 +130,22 @@ object NativeCodec {
                     uuid(message, "interaction_id"),
                 )
             }
+            "command_result" -> {
+                message.exact(setOf("type", "request_id", "session_id", "command_id"))
+                NativeServerMessage.CommandResult(uuid(message, "request_id"), uuid(message, "session_id"), uuid(message, "command_id"))
+            }
             "error" -> decodeError(message)
             else -> throw ProtocolException("unknown Native server message ${message.string("type")}")
         }
     }
 
     private fun decodeHello(message: JsonObject): NativeServerMessage.Hello {
-        message.exact(setOf("type", "connection_id", "channel", "protocol_version", "max_frame_bytes", "ping_interval_seconds", "idle_timeout_seconds"))
+        message.exact(setOf("type", "connection_id", "channel", "protocol_version", "max_frame_bytes", "ping_interval_seconds", "idle_timeout_seconds", "host_run_id", "resume_accepted"))
         val channel = DomainCodec.decode(message.getValue("channel"))
         if (channel.type != "channel_descriptor") throw ProtocolException("server hello channel must be a channel descriptor")
         val capabilities = channel.payload.array("capabilities").map { it.stringValue("capability") }.toSet()
-        if (capabilities != setOf("notification", "session_view", "approval", "realtime_sync")) {
-            throw ProtocolException("Native v1 channel capabilities are incompatible")
+        if (capabilities != setOf("notification", "session_view", "approval", "form_input", "text_input", "realtime_sync", "remote_command")) {
+            throw ProtocolException("Native v3 channel capabilities are incompatible")
         }
         val protocolVersion = message.int("protocol_version")
         if (protocolVersion != DOMAIN_PROTOCOL_VERSION) throw ProtocolException("server selected unsupported domain protocol")
@@ -123,7 +153,16 @@ object NativeCodec {
         val ping = positiveLong(message, "ping_interval_seconds")
         val idle = positiveLong(message, "idle_timeout_seconds")
         if (idle <= ping) throw ProtocolException("idle timeout must exceed ping interval")
-        return NativeServerMessage.Hello(uuid(message, "connection_id"), channel, protocolVersion, max, ping, idle)
+        return NativeServerMessage.Hello(
+            uuid(message, "connection_id"),
+            channel,
+            protocolVersion,
+            max,
+            ping,
+            idle,
+            uuid(message, "host_run_id"),
+            message.boolean("resume_accepted"),
+        )
     }
 
     private fun decodeContext(context: JsonObject): NativeDeliveryContext = when (context.string("type")) {

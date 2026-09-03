@@ -3,6 +3,9 @@ package moe.gensoukyo.agentpulse.connection
 import android.util.Log
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import moe.gensoukyo.agentpulse.BuildConfig
 import moe.gensoukyo.agentpulse.data.ConnectionRoute
@@ -116,9 +119,14 @@ class PairingClient {
         try {
             result.await()
         } finally {
-            socket.cancel()
-            client.connectionPool.evictAll()
-            client.dispatcher.executorService.shutdown()
+            withContext(NonCancellable + Dispatchers.IO) {
+                runCatching { socket.cancel() }
+                    .onFailure { Log.w(LOG_TAG, "Failed to cancel Pairing WebSocket during cleanup", it) }
+                runCatching { client.connectionPool.evictAll() }
+                    .onFailure { Log.w(LOG_TAG, "Failed to evict Pairing connections during cleanup", it) }
+                runCatching { client.dispatcher.executorService.shutdown() }
+                    .onFailure { Log.w(LOG_TAG, "Failed to stop Pairing dispatcher during cleanup", it) }
+            }
         }
     }
 

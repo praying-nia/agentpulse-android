@@ -15,16 +15,16 @@ print_emulator_diagnostics() {
 
 trap print_emulator_diagnostics EXIT
 
-adb wait-for-device
+timeout 30s adb wait-for-device
 
-for attempt in $(seq 1 60); do
+for attempt in $(seq 1 36); do
   boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
   if [[ "$boot_completed" == "1" ]] &&
     adb shell service check package 2>/dev/null | grep -q "found"; then
     break
   fi
 
-  if [[ "$attempt" -eq 60 ]]; then
+  if [[ "$attempt" -eq 36 ]]; then
     echo "Android Package Manager did not become ready" >&2
     exit 1
   fi

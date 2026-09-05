@@ -917,10 +917,13 @@ internal fun parseComposerCommand(value: String, workspace: String?): AgentComma
     val text = value.trim()
     if (text.isEmpty()) return null
     if (!text.startsWith('/')) return AgentCommandPayload.SubmitPrompt(text)
-    val command = text.substringBefore(' ').lowercase(Locale.ROOT)
-    val argument = text.substringAfter(' ', "").trim().ifEmpty { null }
+    val separator = text.indexOfFirst(Char::isWhitespace)
+    val command = text.substring(0, separator.takeIf { it >= 0 } ?: text.length).lowercase(Locale.ROOT)
+    val argument = separator.takeIf { it >= 0 }?.let { text.substring(it + 1).trim().ifEmpty { null } }
     return when (command) {
-        "/model" -> argument?.split(Regex("\\s+"), limit = 2)?.let { AgentCommandPayload.SelectModel(it[0], it.getOrNull(1)) } ?: AgentCommandPayload.ListModels
+        "/model" -> argument?.split(Regex("\\s+"))?.let { parts ->
+            if (parts.size !in 1..2) null else AgentCommandPayload.SelectModel(parts[0], parts.getOrNull(1)?.lowercase(Locale.ROOT))
+        } ?: if (argument == null) AgentCommandPayload.ListModels else null
         "/resume" -> when {
             argument == null -> AgentCommandPayload.ListThreads()
             argument.startsWith("--cursor ") -> AgentCommandPayload.ListThreads(argument.removePrefix("--cursor ").trim())

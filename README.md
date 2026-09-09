@@ -42,3 +42,26 @@ Phone layouts use list/detail navigation; expanded windows use a two-pane timeli
 ## Signed releases
 
 Tag builds require these GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The release workflow produces a signed, minified APK and AAB plus checksums/source archive. Local release signing uses the equivalent `AGENTPULSE_KEYSTORE_PATH`, `AGENTPULSE_KEYSTORE_PASSWORD`, `AGENTPULSE_KEY_ALIAS`, and `AGENTPULSE_KEY_PASSWORD` environment variables.
+
+### Opt-in public Relay pairing regression
+
+`PairingConnectionTest.liveQrConnectsWithoutCardAuthenticationError` runs on a
+real device with a live terminal QR image saved in the app's private `files`
+directory. Supply its filename as instrumentation argument `agentpulseQrFile`;
+without it the test is skipped. Keep MainActivity in the foreground and approve
+the device in the terminal while the test waits. The test uses ML Kit to decode
+the image, then calls the foreground activity's actual MainViewModel and observes
+the same ConnectionRuntime used by the connection card. It fails on any card
+error and checks that the connection remains live for five seconds.
+
+Set `agentpulseRePairConnected=true` to establish the saved connection before
+re-pairing. This test exercises the real public Relay, TLS, credential storage,
+and connection service; it does not exercise camera focus/capture. The image is
+deleted after decoding, and neither the QR URI nor credentials are logged.
+
+When re-pairing the currently connected Host, MainViewModel stops and awaits the
+old connection before sending the pairing request. Terminal approval rotates the
+device credential; the old connection must not retry that revoked credential
+while the new pairing result is still in transit. A different Host's connection
+is not stopped at this step. Pairing failure leaves the stopped connection for
+explicit user recovery; success automatically connects using the new credential.

@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -62,6 +64,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(pairing = PairingPhase.CONNECTING, pairingMessage = null) }
             runCatching {
                 val bundle = PairingCodec.decodeUri(uri)
+                // Approval rotates this device's token. Stop its old connection
+                // before issuing the request so retries cannot use revoked credentials.
+                if (connection.value.host?.hostId == bundle.hostId) {
+                    disconnect()
+                    withTimeout(5_000) {
+                        connection.first { it.host == null }
+                    }
+                }
                 PairingClient().pair(
                     bundle = bundle,
                     clientId = snapshot.clientId,

@@ -34,7 +34,7 @@
     <string name="connection_channel_description">Keeps the selected computer connected</string>
     <string name="connecting_to">Connecting to %1$s</string>
     <string name="connection_lost">Connection to %1$s was lost</string>
-    <string name="interaction_waiting">%1$s needs approval</string>
+    <string name="interaction_waiting">%1$s needs your input</string>
     <string name="session_finished">%1$s finished</string>
     <string name="camera_permission_required">Camera permission is required to scan a QR code.</string>
     <string name="local_network_permission_required">Local network permission is required to connect to the Host.</string>
@@ -81,14 +81,14 @@
     <string name="event_tool_activity">Tool activity</string>
     <string name="event_plan_updated">Plan updated</string>
     <string name="event_progress_updated">Progress updated</string>
-    <string name="event_interaction_requested">Approval requested</string>
+    <string name="event_interaction_requested">Interaction requested</string>
     <string name="event_interaction_responded">Interaction responded</string>
     <string name="event_interaction_closed">Interaction closed</string>
     <string name="event_command_issued">Command issued</string>
     <string name="event_session_ended">Session ended</string>
     <plurals name="pending_approvals">
-        <item quantity="one">%1$d pending approval</item>
-        <item quantity="other">%1$d pending approvals</item>
+        <item quantity="one">%1$d pending interaction</item>
+        <item quantity="other">%1$d pending interactions</item>
     </plurals>
     <string name="approval_command">Command execution</string>
     <string name="approval_write_stdin">Terminal input</string>
@@ -104,7 +104,7 @@
     <string name="form_answer">Answer</string>
     <string name="form_other">Other</string>
     <string name="form_submit">Submit answers</string>
-    <string name="form_submitting">Waiting for Codex…</string>
+    <string name="form_submitting">Submitting…</string>
     <string name="form_read_only">This request can only be answered from another Codex client.</string>
     <string name="connection_unavailable">The Host connection is unavailable.</string>
     <string name="appearance">Appearance</string>

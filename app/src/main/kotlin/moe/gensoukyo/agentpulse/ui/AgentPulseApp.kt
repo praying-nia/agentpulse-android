@@ -1182,6 +1182,7 @@ private fun RelaySettingsDialog(host: HostProfile, onDismiss: () -> Unit, onSave
 @Composable
 private fun FormCard(form: FormPrompt, onSubmit: (Map<String, FormAnswer>) -> Unit) {
     var answers by remember(form.id) { mutableStateOf<Map<String, FormAnswer>>(emptyMap()) }
+    val directChoice = form.fields.singleOrNull()?.takeIf { !it.allowsOther && !it.sensitive && it.options.isNotEmpty() }
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1193,23 +1194,36 @@ private fun FormCard(form: FormPrompt, onSubmit: (Map<String, FormAnswer>) -> Un
                     Text(field.header, style = MaterialTheme.typography.labelLarge)
                     Text(field.prompt, style = MaterialTheme.typography.bodyMedium)
                     field.options.forEach { option ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable(enabled = form.interactive) {
-                                answers = answers + (field.id to FormAnswer.Choice(option.id))
-                            },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = (answers[field.id] as? FormAnswer.Choice)?.optionId == option.id,
-                                onClick = if (form.interactive) {
-                                    {
+                        if (directChoice != null) {
+                            OutlinedButton(
+                                onClick = { onSubmit(mapOf(field.id to FormAnswer.Choice(option.id))) },
+                                enabled = form.interactive && form.submissionState != ApprovalSubmissionState.SUBMITTING,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(option.label)
+                                    option.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                }
+                            }
+                        } else {
+                            Row(
+                                Modifier.fillMaxWidth().clickable(enabled = form.interactive) {
                                     answers = answers + (field.id to FormAnswer.Choice(option.id))
-                                    }
-                                } else null,
-                            )
-                            Column(Modifier.weight(1f)) {
-                                Text(option.label)
-                                option.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = (answers[field.id] as? FormAnswer.Choice)?.optionId == option.id,
+                                    onClick = if (form.interactive) {
+                                        {
+                                            answers = answers + (field.id to FormAnswer.Choice(option.id))
+                                        }
+                                    } else null,
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(option.label)
+                                    option.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                }
                             }
                         }
                     }
@@ -1233,7 +1247,7 @@ private fun FormCard(form: FormPrompt, onSubmit: (Map<String, FormAnswer>) -> Un
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(stringResource(R.string.form_submitting))
                 }
-            } else if (form.interactive) {
+            } else if (form.interactive && directChoice == null) {
                 Button(
                     onClick = { onSubmit(answers) },
                     enabled = form.fields.all { field ->
@@ -1245,7 +1259,7 @@ private fun FormCard(form: FormPrompt, onSubmit: (Map<String, FormAnswer>) -> Un
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.form_submit)) }
-            } else {
+            } else if (!form.interactive) {
                 Text(stringResource(R.string.form_read_only), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

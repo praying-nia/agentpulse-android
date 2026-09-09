@@ -34,7 +34,7 @@
     <string name="connection_channel_description">保持与所选电脑的连接</string>
     <string name="connecting_to">正在连接 %1$s</string>
     <string name="connection_lost">与 %1$s 的连接已断开</string>
-    <string name="interaction_waiting">%1$s 需要审批</string>
+    <string name="interaction_waiting">%1$s 需要交互</string>
     <string name="session_finished">%1$s 已结束</string>
     <string name="camera_permission_required">扫描二维码需要相机权限。</string>
     <string name="local_network_permission_required">连接电脑需要本地网络权限。</string>
@@ -81,13 +81,13 @@
     <string name="event_tool_activity">工具活动</string>
     <string name="event_plan_updated">计划已更新</string>
     <string name="event_progress_updated">进度已更新</string>
-    <string name="event_interaction_requested">需要审批</string>
+    <string name="event_interaction_requested">需要交互</string>
     <string name="event_interaction_responded">交互已响应</string>
     <string name="event_interaction_closed">交互已关闭</string>
     <string name="event_command_issued">命令已发出</string>
     <string name="event_session_ended">会话已结束</string>
     <plurals name="pending_approvals">
-        <item quantity="other">%1$d 个待审批请求</item>
+        <item quantity="other">%1$d 个待处理交互</item>
     </plurals>
     <string name="approval_command">命令执行</string>
     <string name="approval_write_stdin">终端输入</string>
@@ -103,7 +103,7 @@
     <string name="form_answer">回答</string>
     <string name="form_other">其他</string>
     <string name="form_submit">提交回答</string>
-    <string name="form_submitting">正在等待 Codex…</string>
+    <string name="form_submitting">正在提交…</string>
     <string name="form_read_only">此请求只能由另一个 Codex 客户端回答。</string>
     <string name="connection_unavailable">Host 连接当前不可用。</string>
     <string name="appearance">外观</string>

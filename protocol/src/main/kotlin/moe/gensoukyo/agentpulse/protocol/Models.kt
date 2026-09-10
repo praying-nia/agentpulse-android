@@ -251,6 +251,7 @@ data class PairingBundle(
     val bootstrapToken: String,
     val relayEndpoint: String,
     val expiresAtUnixSeconds: Long,
+    val route: String = "relay",
 )
 
 data class PairingRequest(

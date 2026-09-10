@@ -31,12 +31,12 @@ class PairingClient {
         onPending: () -> Unit,
     ): HostProfile = withTimeout(125_000) {
         val result = CompletableDeferred<HostProfile>()
-        val relay = RelayEndpoint.parse(bundle.relayEndpoint)
+        val relay = if (bundle.route == "relay") RelayEndpoint.parse(bundle.relayEndpoint) else null
         val client = pinnedClient(
             bundle.serverName,
             bundle.address,
             bundle.leafSha256,
-            RelayTunnelSocketFactory(relay, bundle.bootstrapToken),
+            relay?.let { RelayTunnelSocketFactory(it, bundle.bootstrapToken) },
         )
             .newBuilder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -88,7 +88,7 @@ class PairingClient {
                                 }
                             }
                             is PairingServerMessage.Succeeded -> {
-                                runCatching { pairedRelayProfile(bundle, message) }
+                                runCatching { pairedHostProfile(bundle, message) }
                                     .onSuccess { profile ->
                                         result.complete(profile)
                                         webSocket.close(1000, "paired")
@@ -138,7 +138,7 @@ class PairingClient {
     }
 }
 
-internal fun pairedRelayProfile(
+internal fun pairedHostProfile(
     bundle: PairingBundle,
     message: PairingServerMessage.Succeeded,
 ): HostProfile {
@@ -148,6 +148,11 @@ internal fun pairedRelayProfile(
         message.nativeTransportVersion != NATIVE_TRANSPORT_VERSION ||
         DOMAIN_PROTOCOL_VERSION !in message.domainProtocolVersions
     ) throw IllegalStateException("Host identity or protocol changed during pairing")
+    require(bundle.route == "direct" || bundle.route == "relay") { "Unsupported pairing route" }
+    if (bundle.route == "direct") {
+        PairingCodec.validateDirectHost(message.nativeAddress)
+        require(message.nativePort in 1..65535) { "Invalid direct Native port" }
+    }
     return HostProfile(
         hostId = message.hostId,
         hostName = message.hostName,
@@ -156,7 +161,9 @@ internal fun pairedRelayProfile(
         accessToken = message.accessToken,
         lastAddress = message.nativeAddress,
         lastPort = message.nativePort,
-        relayEndpoint = RelayEndpoint.parse(bundle.relayEndpoint).authority,
-        selectedRoute = ConnectionRoute.RELAY,
+        relayEndpoint = if (bundle.route == "relay") RelayEndpoint.parse(bundle.relayEndpoint).authority else null,
+        selectedRoute = if (bundle.route == "direct") ConnectionRoute.DIRECT else ConnectionRoute.RELAY,
+        directAddress = if (bundle.route == "direct") message.nativeAddress else null,
+        directPort = if (bundle.route == "direct") message.nativePort else null,
     )
 }

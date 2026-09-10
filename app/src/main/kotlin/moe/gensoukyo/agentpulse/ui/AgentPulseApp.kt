@@ -452,9 +452,9 @@ private fun HostCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
-                    selected = host.selectedRoute == ConnectionRoute.LAN,
-                    onClick = { onSelectRoute(host.hostId, ConnectionRoute.LAN) },
-                    label = { Text(stringResource(R.string.route_lan)) },
+                    selected = host.selectedRoute == (if (host.directAddress != null) ConnectionRoute.DIRECT else ConnectionRoute.LAN),
+                    onClick = { onSelectRoute(host.hostId, if (host.directAddress != null) ConnectionRoute.DIRECT else ConnectionRoute.LAN) },
+                    label = { Text(stringResource(if (host.directAddress != null) R.string.route_direct else R.string.route_lan)) },
                 )
                 FilterChip(
                     selected = host.selectedRoute == ConnectionRoute.RELAY,
@@ -1007,9 +1007,9 @@ private fun SettingsScreen(
                     LabelValue(stringResource(R.string.relay_endpoint), host.relayEndpoint ?: "—")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = host.selectedRoute == ConnectionRoute.LAN,
-                            onClick = { onSelectRoute(host.hostId, ConnectionRoute.LAN) },
-                            label = { Text(stringResource(R.string.route_lan)) },
+                            selected = host.selectedRoute == (if (host.directAddress != null) ConnectionRoute.DIRECT else ConnectionRoute.LAN),
+                            onClick = { onSelectRoute(host.hostId, if (host.directAddress != null) ConnectionRoute.DIRECT else ConnectionRoute.LAN) },
+                            label = { Text(stringResource(if (host.directAddress != null) R.string.route_direct else R.string.route_lan)) },
                         )
                         FilterChip(
                             selected = host.selectedRoute == ConnectionRoute.RELAY,

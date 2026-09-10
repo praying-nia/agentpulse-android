@@ -53,7 +53,7 @@ private fun tlsClient(
     val builder = OkHttpClient.Builder()
         .sslSocketFactory(context.socketFactory, trust)
         .dns(Dns { hostname ->
-            if (hostname.equals(serverName, ignoreCase = true)) listOf(InetAddress.getByName(address))
+            if (hostname.equals(serverName, ignoreCase = true)) InetAddress.getAllByName(address).toList()
             else Dns.SYSTEM.lookup(hostname)
         })
         .pingInterval(10, TimeUnit.SECONDS)

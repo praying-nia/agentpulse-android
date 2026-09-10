@@ -128,4 +128,5 @@
     <string name="version">版本</string>
     <string name="forget_host_title">忘记 %1$s？</string>
     <string name="forget_host_warning">这会删除本地凭据；再次连接需要重新扫描二维码。</string>
+    <string name="route_direct">公网直连</string>
 </resources>

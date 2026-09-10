@@ -15,17 +15,26 @@ object PairingCodec {
     private val json = Json { ignoreUnknownKeys = false; isLenient = false; explicitNulls = false }
 
     fun decodeUri(uri: String, nowUnixSeconds: Long = System.currentTimeMillis() / 1_000): PairingBundle {
-        val encoded = uri.removePrefix(URI_PREFIX)
-        if (encoded == uri || encoded.isBlank()) throw ProtocolException("unsupported pairing URI")
+        val discoveryVersion = when {
+            uri.startsWith(URI_PREFIX) -> 1
+            uri.startsWith("agentpulse://pair/v2/") -> 2
+            else -> throw ProtocolException("unsupported pairing URI")
+        }
+        val encoded = uri.substringAfter("agentpulse://pair/v$discoveryVersion/")
+        if (encoded.isBlank()) throw ProtocolException("invalid pairing URI")
         val bytes = try { Base64.getUrlDecoder().decode(encoded) } catch (error: IllegalArgumentException) { throw ProtocolException("invalid pairing URI", error) }
         val value = json.parseToJsonElement(bytes.decodeToString()).objectValue("pairing bundle")
-        value.exact(setOf("pairing_version", "pairing_id", "host_id", "host_name", "server_name", "address", "port", "leaf_sha256", "bootstrap_token", "relay_endpoint", "expires_at_unix_seconds"))
-        if (value.int("pairing_version") != PAIRING_PROTOCOL_VERSION) throw ProtocolException("unsupported pairing version")
+        value.exact(setOf("pairing_version", "pairing_id", "host_id", "host_name", "server_name", "address", "port", "leaf_sha256", "bootstrap_token", if (discoveryVersion == 1) "relay_endpoint" else "route", "expires_at_unix_seconds"))
+        if (value.int("pairing_version") != discoveryVersion) throw ProtocolException("unsupported pairing version")
         val port = integer(value, "port", 1..65535)
         val expires = value["expires_at_unix_seconds"]?.let { (it as? JsonPrimitive)?.longOrNull } ?: throw ProtocolException("invalid pairing expiry")
         if (expires <= nowUnixSeconds) throw ProtocolException("pairing session expired")
         val fingerprint = value.string("leaf_sha256")
         if (!fingerprint.matches(Regex("[0-9a-f]{64}"))) throw ProtocolException("invalid leaf certificate fingerprint")
+        if (discoveryVersion == 2) {
+            if (value.string("route") != "direct") throw ProtocolException("unsupported pairing route")
+            validateDirectHost(value.nonblank("address"))
+        }
         return PairingBundle(
             pairingId = UuidV7.require(value.string("pairing_id"), "pairing_id"),
             hostId = UuidV7.require(value.string("host_id"), "host_id"),
@@ -35,7 +44,8 @@ object PairingCodec {
             port = port,
             leafSha256 = fingerprint,
             bootstrapToken = value.nonblank("bootstrap_token"),
-            relayEndpoint = validateRelayEndpoint(value.nonblank("relay_endpoint")),
+            relayEndpoint = if (discoveryVersion == 1) validateRelayEndpoint(value.nonblank("relay_endpoint")) else "",
+            route = if (discoveryVersion == 1) "relay" else "direct",
             expiresAtUnixSeconds = expires,
         )
     }
@@ -95,6 +105,25 @@ object PairingCodec {
             nativeTransportVersion = nativeVersion,
             domainProtocolVersions = versions,
         )
+    }
+
+    fun validateDirectHost(host: String) {
+        val valid = if (host.contains(':')) {
+            !host.contains('%') && !host.contains('[') && runCatching {
+                val ip = java.net.InetAddress.getByName(host)
+                !ip.isAnyLocalAddress && !ip.isMulticastAddress
+            }.getOrDefault(false)
+        } else if (host.matches(Regex("[0-9.]+"))) {
+            val parts = host.split('.')
+            parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 && (it == "0" || !it.startsWith('0')) } &&
+                parts.first().toIntOrNull() !in 224..239 && host != "0.0.0.0"
+        } else {
+            host.length in 1..253 && host.split('.').all {
+                it.length in 1..63 && it.first().isLetterOrDigit() && it.last().isLetterOrDigit() &&
+                    it.all { c -> c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '-' }
+            }
+        }
+        if (!valid) throw ProtocolException("invalid direct address")
     }
 
     private fun integer(value: JsonObject, field: String, range: IntRange): Int = value[field]?.let { (it as? JsonPrimitive)?.longOrNull }?.takeIf { it in range.first.toLong()..range.last.toLong() }?.toInt() ?: throw ProtocolException("invalid $field")

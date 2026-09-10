@@ -2,8 +2,7 @@ package moe.gensoukyo.agentpulse
 
 import android.util.Log
 import androidx.lifecycle.ViewModelProvider
-import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-import androidx.test.runner.lifecycle.Stage
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.gms.tasks.Tasks
@@ -46,22 +45,11 @@ class PairingConnectionTest {
         Log.i("APConnectionE2E", "QR decoded; launching activity")
         val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
-            var activity: MainActivity? = null
-            withTimeout(30_000) {
-                while (activity == null) {
-                    instrumentation.runOnMainSync {
-                        activity = ActivityLifecycleMonitorRegistry.getInstance()
-                            .getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
-                    }
-                    delay(20)
-                }
-            }
             lateinit var model: MainViewModel
+            scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
             Log.i("APConnectionE2E", "activity is foreground")
-            instrumentation.runOnMainSync {
-                model = ViewModelProvider(requireNotNull(activity))[MainViewModel::class.java]
-            }
             if (InstrumentationRegistry.getArguments().getString("agentpulseRePairConnected") == "true") {
                 withTimeout(10_000) {
                     while (model.state.value.hosts.isEmpty()) delay(20)
@@ -93,6 +81,13 @@ class PairingConnectionTest {
                     while (model.connection.value.connection != ConnectionPhase.CONNECTED) delay(20)
                 }
                 delay(5_000)
+                if (InstrumentationRegistry.getArguments().getString("agentpulseExpectedRoute") == "direct") {
+                    val profile = requireNotNull(model.connection.value.host)
+                    assertTrue("Expected direct route", profile.selectedRoute == moe.gensoukyo.agentpulse.data.ConnectionRoute.DIRECT)
+                    assertTrue("Direct pairing must not save a Relay", profile.relayEndpoint == null)
+                    assertTrue("Missing direct Native endpoint", profile.directAddress != null && profile.directPort != null)
+                    assertCellularWithoutVpn()
+                }
                 assertTrue("Connection card errors: $failures", failures.isEmpty())
                 assertTrue(model.connection.value.connection == ConnectionPhase.CONNECTED)
             } finally {
@@ -100,6 +95,7 @@ class PairingConnectionTest {
             }
         } finally {
             scope.cancel()
+            scenario.close()
         }
     }
 }

@@ -35,7 +35,7 @@ internal class NativeWebSocketClient(
     private val reducer = NativeSessionReducer(initialState = initialState)
     private val client = caClient(
         profile.serverName,
-        profile.lastAddress,
+        if (profile.selectedRoute == ConnectionRoute.DIRECT) requireNotNull(profile.directAddress) else profile.lastAddress,
         profile.caCertificateDer,
         if (profile.selectedRoute == ConnectionRoute.RELAY) {
             val endpoint = RelayEndpoint.parse(
@@ -54,8 +54,9 @@ internal class NativeWebSocketClient(
     private val commandTracker = CommandSubmissionTracker()
 
     fun connect() {
+        val port = if (profile.selectedRoute == ConnectionRoute.DIRECT) requireNotNull(profile.directPort) else profile.lastPort
         val request = Request.Builder()
-            .url("https://${profile.serverName}:${profile.lastPort}$NATIVE_PATH")
+            .url("https://${profile.serverName}:$port$NATIVE_PATH")
             .header("Sec-WebSocket-Protocol", NATIVE_SUBPROTOCOL)
             .header("Authorization", "Bearer ${profile.accessToken}")
             .header("X-AgentPulse-Client-Id", clientId)

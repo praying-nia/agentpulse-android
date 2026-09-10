@@ -52,7 +52,7 @@ fun QrScanner(modifier: Modifier = Modifier, onResult: (String) -> Unit, onError
                             .build()
                         analysis.setAnalyzer(executor) { proxy ->
                             analyze(proxy, scanner) { value ->
-                                if (value.startsWith("agentpulse://pair/v1/") && delivered.compareAndSet(false, true)) {
+                                if (value.startsWith("agentpulse://pair/") && delivered.compareAndSet(false, true)) {
                                     provider.unbindAll()
                                     onResult(value)
                                 }

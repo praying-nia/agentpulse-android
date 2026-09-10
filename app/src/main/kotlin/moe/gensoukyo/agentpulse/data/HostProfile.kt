@@ -13,10 +13,12 @@ data class HostProfile(
     val lastPort: Int,
     val relayEndpoint: String? = null,
     val selectedRoute: ConnectionRoute = ConnectionRoute.LAN,
+    val directAddress: String? = null,
+    val directPort: Int? = null,
 )
 
 @Serializable
-enum class ConnectionRoute { LAN, RELAY }
+enum class ConnectionRoute { LAN, RELAY, DIRECT }
 
 @Serializable
 internal data class VaultPayload(

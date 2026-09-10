@@ -182,7 +182,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val profile = vault.host(hostId) ?: return@launch
             val updated = profile.copy(
                 relayEndpoint = endpoint,
-                selectedRoute = if (endpoint == null) ConnectionRoute.LAN else profile.selectedRoute,
+                selectedRoute = if (endpoint == null) { if (profile.directAddress != null) ConnectionRoute.DIRECT else ConnectionRoute.LAN } else profile.selectedRoute,
             )
             vault.upsert(updated)
             refresh()
@@ -193,6 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val profile = vault.host(hostId) ?: return@launch
             if (route == ConnectionRoute.RELAY && profile.relayEndpoint == null) return@launch
+            if (route == ConnectionRoute.DIRECT && (profile.directAddress == null || profile.directPort == null)) return@launch
             vault.upsert(profile.copy(selectedRoute = route))
             refresh()
         }

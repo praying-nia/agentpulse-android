@@ -31,7 +31,7 @@ class DirectConnectionTest {
         val hostId = args.getString("agentpulseHostId")
         assumeTrue("Requires a paired public Host", hostId != null)
         Log.i("APDirectE2E", "checking cellular network")
-        assertCellularWithoutVpn()
+        assertAcceptanceNetwork()
         Log.i("APDirectE2E", "waiting for foreground Activity")
         run {
             val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -71,8 +71,8 @@ class DirectConnectionTest {
                 assertEquals(ConnectionPhase.CONNECTED, model.connection.value.connection)
                 assertEquals(null, model.connection.value.error)
                 assertEquals(profile.directAddress, model.connection.value.host?.directAddress)
-                assertCellularWithoutVpn()
-                if (attempt == 0) args.getString("agentpulseSessionId")?.let { sessionId ->
+                assertAcceptanceNetwork()
+                args.getString("agentpulseSessionId")?.let { sessionId ->
                     withTimeout(20_000) {
                         while (model.connection.value.native.sessions[sessionId] == null) delay(50)
                     }
@@ -120,11 +120,13 @@ class DirectConnectionTest {
     }
 }
 
-internal fun assertCellularWithoutVpn() {
+internal fun assertAcceptanceNetwork() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val capabilities = requireNotNull(manager.getNetworkCapabilities(manager.activeNetwork))
-    assertTrue("Acceptance requires mobile data", capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))
+    val requireCellular = InstrumentationRegistry.getArguments().getString("agentpulseRequireCellular") != "false"
+    assertTrue("Acceptance requires internet capability", capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+    if (requireCellular) assertTrue("Acceptance requires mobile data", capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))
     assertTrue("Acceptance must bypass VPN", !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN))
-    assertTrue("Acceptance must bypass Wi-Fi", !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+    if (requireCellular) assertTrue("Acceptance must bypass Wi-Fi", !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
 }

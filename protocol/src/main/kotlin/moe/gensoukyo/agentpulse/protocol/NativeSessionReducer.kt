@@ -1,5 +1,7 @@
 package moe.gensoukyo.agentpulse.protocol
 
+import java.time.Instant
+
 class NativeSessionReducer(
     private val maxEventsPerSession: Int? = null,
     initialState: NativeState = NativeState(),
@@ -96,6 +98,7 @@ class NativeSessionReducer(
                 sessionId = sessionId,
                 channelId = channelId,
                 optionId = optionId,
+                respondedAt = responseTime(approval.requestedAt),
             ),
         )
     }
@@ -139,9 +142,14 @@ class NativeSessionReducer(
         approvalSubmissions[requestId] = ApprovalSubmission(sessionId, interactionId)
         return NativeClientMessage.SubmitInteractionResponse(
             requestId,
-            DomainCodec.formResponse(interactionId, sessionId, channelId, answers),
+            DomainCodec.formResponse(interactionId, sessionId, channelId, answers, responseTime(form.requestedAt)),
         )
     }
+
+    // A phone clock can lag behind the Host. Preserve the request/response order
+    // without requiring clocks on two machines to be perfectly synchronized.
+    private fun responseTime(requestedAt: String): Instant =
+        maxOf(Instant.now(), Instant.parse(requestedAt))
 
     @Synchronized
     fun failApprovalSubmission(requestId: String, message: String) {

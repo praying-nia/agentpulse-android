@@ -587,6 +587,37 @@ class ProtocolTest {
         )
     }
 
+    @Test
+    fun approvalResponsePreservesCausalTimeWhenHostClockIsAhead() {
+        val requested = java.time.Instant.now().plusSeconds(3600).plusNanos(123456789)
+        val reducer = approvalReducer(
+            ArrayDeque(listOf(DISCOVER_ID, SUBSCRIBE_ID, SUBMIT_ID)),
+            APPROVAL_DOMAIN.replace("2026-08-29T00:03:00Z", requested.toString()),
+        )
+        val result = reducer.submitApproval(SESSION_ID, INTERACTION_ID, OPTION_ONCE_ID)
+        assertEquals(requested.toString(), result.response.payload.getValue("responded_at").let { (it as kotlinx.serialization.json.JsonPrimitive).content })
+    }
+
+    @Test
+    fun formResponseUsesHostTimeOnlyWhenLocalTimeWouldBeEarlier() {
+        for (offset in listOf(-3600L, 3600L)) {
+            val requested = java.time.Instant.now().plusSeconds(offset)
+            val before = java.time.Instant.now()
+            val reducer = approvalReducer(
+                ArrayDeque(listOf(DISCOVER_ID, SUBSCRIBE_ID, SUBMIT_ID)),
+                FORM_DOMAIN.replace("2026-08-29T00:03:00Z", requested.toString()),
+            )
+            val result = reducer.submitForm(SESSION_ID, INTERACTION_ID, mapOf(
+                FORM_CHOICE_FIELD_ID to FormAnswer.Choice(OPTION_ONCE_ID),
+                FORM_SECRET_FIELD_ID to FormAnswer.Text("test-secret"),
+            ))
+            val responded = java.time.Instant.parse((result.response.payload.getValue("responded_at") as kotlinx.serialization.json.JsonPrimitive).content)
+            assertTrue(responded >= requested)
+            if (offset > 0) assertEquals(requested, responded)
+            else assertTrue(responded >= before && responded <= java.time.Instant.now())
+        }
+    }
+
     private fun approvalReducer(
         ids: ArrayDeque<String>,
         interaction: String = APPROVAL_DOMAIN,

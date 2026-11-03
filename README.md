@@ -11,7 +11,8 @@ The app securely pairs with an `agentpulse` Host only by scanning its terminal Q
 - Android 8.0 / API 26 or newer
 - A camera for the only supported first-pairing path
 - Android SDK Platform 37.0 and Build Tools 37.0.0
-- JDK 21, matching the repository CI
+- JDK 21+ to launch Gradle; the repository daemon criteria pin JDK 25, which
+  must be installed or available through Gradle toolchain provisioning
 
 ```bash
 ./gradlew test lintDebug assembleDebug
@@ -90,8 +91,45 @@ VPN/Wi-Fi. `DirectConnectionTest.savedHostConnectsAndReconnectsOverCellular` tak
 `agentpulseHostId`, optional `agentpulseExpectedAddress`/`agentpulseExpectedPort`,
 and optionally `agentpulseSessionId` for a real message/reply check. Start the
 formal MainActivity after this instrumentation runner starts; force-stop the app
-beforehand to exercise persisted credentials on cold start. Keep the managed
-control connection for the message test online. The test never imports tokens or
+beforehand to exercise persisted credentials on cold start. To check independent
+phone continuation, close the original managed control connection before starting
+the test. The test never imports tokens or
 adds a production pairing entry point. See the [2026-09-10 acceptance report](../docs/validation/2026-09-10-public-direct.md)
-for passed scenarios, earlier test-harness failures, and the unresolved response
-case after the control connection exited.
+for the original device results and the [0.166.0 upgrade record](../docs/validation/2026-11-03-codex-0166.md)
+for the subsequent emulator reproduction and fix of the response case after the
+control connection exited.
+
+### Opt-in Codex compatibility acceptance
+
+`CodexCompatibilityTest` launches the real activity and uses its production
+MainViewModel and foreground connection service. Pair through a real QR first,
+then supply `agentpulseHostId` and `agentpulseSessionId` for a disposable thread
+in an isolated Host workspace. These tests consume real model inference.
+
+- `messagesModelsPlansAndReconnect` checks new assistant replies, model/effort
+  selection, invalid-model recovery, Plan revision/implementation, and reconnect.
+  It asks Codex to create `acceptance.txt` in that disposable thread's workspace.
+- `liveCommandApprovalAndStructuredInput` additionally requires
+  `agentpulseApprovalTarget`, a disposable absolute Host path outside the thread's
+  writable workspace. It approves that exact command once, writes the target,
+  and answers a real Codex `request_user_input` question. Verify both generated
+  files on the Host as part of acceptance.
+
+For an emulator, explicitly set `agentpulseRequireCellular=false` on the pairing,
+direct, and Codex compatibility tests. The default remains cellular without
+Wi-Fi/VPN; the emulator override allows Wi-Fi while still rejecting VPN. Connect
+to the Host's reachable address directly; ADB installs/runs the tests and does not
+forward business traffic.
+
+```bash
+adb shell am instrument -w -r \
+  -e class 'moe.gensoukyo.agentpulse.CodexCompatibilityTest#messagesModelsPlansAndReconnect' \
+  -e agentpulseHostId "$HOST_ID" -e agentpulseSessionId "$THREAD_ID" \
+  -e agentpulseRequireCellular false \
+  moe.gensoukyo.agentpulse.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+This covers the real protocol and service path, not camera optical capture or
+every on-screen interaction. `AppLaunchTest` and `CredentialVaultTest` separately
+exercise navigation and device credential storage on the emulator. QR images and
+credentials must remain private; neither test prints bootstrap tokens.

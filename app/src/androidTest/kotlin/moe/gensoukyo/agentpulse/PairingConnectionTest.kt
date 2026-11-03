@@ -86,7 +86,7 @@ class PairingConnectionTest {
                     assertTrue("Expected direct route", profile.selectedRoute == moe.gensoukyo.agentpulse.data.ConnectionRoute.DIRECT)
                     assertTrue("Direct pairing must not save a Relay", profile.relayEndpoint == null)
                     assertTrue("Missing direct Native endpoint", profile.directAddress != null && profile.directPort != null)
-                    assertCellularWithoutVpn()
+                    assertAcceptanceNetwork()
                 }
                 assertTrue("Connection card errors: $failures", failures.isEmpty())
                 assertTrue(model.connection.value.connection == ConnectionPhase.CONNECTED)

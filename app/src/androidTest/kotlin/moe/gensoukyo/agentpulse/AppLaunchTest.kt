@@ -1,6 +1,8 @@
 package moe.gensoukyo.agentpulse
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -21,7 +23,7 @@ class AppLaunchTest {
 
     @Test
     fun bottomNavigationOpensSettings() {
-        composeRule.onNodeWithText("Settings").performClick()
+        composeRule.onNode(hasText("Settings") and isSelectable()).performClick()
 
         composeRule.onNodeWithText("Appearance").assertIsDisplayed()
         composeRule.onNodeWithText("Theme mode").assertIsDisplayed()
